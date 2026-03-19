@@ -1,0 +1,14 @@
+{
+  "unknown_intent": "Tôi chưa hiểu yêu cầu. Hãy nhập đúng intent: giao việc, việc của tôi, hoặc help.",
+  "giao_viec.ask_summary": "Nhập Summary công việc",
+  "giao_viec.ask_description": "Nhập Description công việc",
+  "giao_viec.ask_file": "Bạn có muốn thêm file không. Nếu muốn thì upload file. Nếu không thì nói Không",
+  "giao_viec.ask_checklist": "Bạn có muốn thêm việc trong checklist không. Nếu muốn hãy viết luôn công việc. Nếu không thì nói Không",
+  "giao_viec.ask_due_days": "Nhập số ngày cần hoàn thành. Yêu cầu nhập giá trị số",
+  "viec_cua_toi.ask_summary": "Nhập Summary công việc",
+  "viec_cua_toi.ask_description": "Nhập Description công việc",
+  "viec_cua_toi.ask_file": "Bạn có muốn thêm file không. Nếu muốn thì upload file. Nếu không thì nói Không",
+  "viec_cua_toi.ask_checklist": "Bạn có muốn thêm việc trong checklist không. Nếu muốn hãy viết luôn công việc. Nếu không thì nói Không",
+  "viec_cua_toi.ask_due_days": "Nhập số ngày cần hoàn thành. Yêu cầu nhập giá trị số"
+}
+

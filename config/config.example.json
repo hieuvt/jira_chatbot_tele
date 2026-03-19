@@ -1,0 +1,29 @@
+{
+  "telegram": {
+    "bot_token": "TELEGRAM_BOT_TOKEN",
+    "allowed_chat_ids": [
+      0
+    ]
+  },
+  "jira": {
+    "base_url": "https://your-domain.atlassian.net",
+    "email": "user@company.com",
+    "api_token": "JIRA_API_TOKEN",
+    "project_key": "ABC",
+    "issue_type_key": "TASK",
+    "subtask_issue_type_key": "SUBTASK",
+    "admin_project_role_name": "Administrators",
+    "attachment_max_bytes": 10485760
+  },
+  "due": {
+    "notification": {
+      "window_days": 3,
+      "report_timezone": "Asia/Ho_Chi_Minh",
+      "report_times": [
+        "08:00",
+        "17:00"
+      ]
+    }
+  }
+}
+
