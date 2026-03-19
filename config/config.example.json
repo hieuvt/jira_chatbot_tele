@@ -3,7 +3,10 @@
     "bot_token": "TELEGRAM_BOT_TOKEN",
     "allowed_chat_ids": [
       0
-    ]
+    ],
+    "attachments": {
+      "max_files": 10
+    }
   },
   "jira": {
     "base_url": "https://your-domain.atlassian.net",
@@ -23,6 +26,9 @@
         "17:00"
       ]
     }
+  },
+  "conversation": {
+    "timeout_minutes": 10
   }
 }
 

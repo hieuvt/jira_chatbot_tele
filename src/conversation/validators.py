@@ -11,11 +11,31 @@ def parse_due_days(raw_value: str) -> int:
     return value
 
 
-def parse_checklist_line(raw_value: str) -> str | None:
-    line = raw_value.strip()
-    if not line:
-        return None
-    if line.lower() == "không":
-        return None
-    return line
+def normalize_token(raw_value: str) -> str:
+    return raw_value.strip().lower()
+
+
+def is_khong(raw_value: str) -> bool:
+    return normalize_token(raw_value) in {"không", "khong", "no"}
+
+
+def is_huy(raw_value: str) -> bool:
+    return normalize_token(raw_value) in {"hủy", "huy", "/cancel"}
+
+
+def is_xong(raw_value: str) -> bool:
+    return normalize_token(raw_value) in {"xong", "done", "/done"}
+
+
+def is_co(raw_value: str) -> bool:
+    return normalize_token(raw_value) in {"có", "co", "yes"}
+
+
+def split_checklist_lines(raw_value: str) -> list[str]:
+    values: list[str] = []
+    for line in raw_value.splitlines():
+        item = line.strip()
+        if item:
+            values.append(item)
+    return values
 

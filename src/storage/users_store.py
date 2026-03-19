@@ -27,7 +27,13 @@ class UsersStore:
         if not self.file_path.exists():
             return {}
         with self.file_path.open("r", encoding="utf-8") as file:
-            content = json.load(file)
+            raw = file.read()
+        if not raw.strip():
+            return {}
+        try:
+            content = json.loads(raw)
+        except json.JSONDecodeError:
+            return {}
         if not isinstance(content, dict):
             return {}
         return {str(k): str(v) for k, v in content.items()}

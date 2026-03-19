@@ -3,6 +3,7 @@
 ## telegram
 - `bot_token`: Telegram bot token.
 - `allowed_chat_ids`: list group IDs the bot can serve.
+- `attachments.max_files`: max attachments per conversation (default `10`).
 
 ## jira
 - `base_url`
@@ -23,4 +24,7 @@
 - `window_days`
 - `report_timezone` (default `Asia/Ho_Chi_Minh`)
 - `report_times` (default `["08:00", "17:00"]`)
+
+## conversation
+- `timeout_minutes`: conversation timeout in minutes (default `10`).
 

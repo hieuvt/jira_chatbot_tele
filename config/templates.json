@@ -1,14 +1,30 @@
 {
-  "unknown_intent": "Tôi chưa hiểu yêu cầu. Hãy nhập đúng intent: giao việc, việc của tôi, hoặc help.",
-  "giao_viec.ask_summary": "Nhập Summary công việc",
-  "giao_viec.ask_description": "Nhập Description công việc",
-  "giao_viec.ask_file": "Bạn có muốn thêm file không. Nếu muốn thì upload file. Nếu không thì nói Không",
-  "giao_viec.ask_checklist": "Bạn có muốn thêm việc trong checklist không. Nếu muốn hãy viết luôn công việc. Nếu không thì nói Không",
-  "giao_viec.ask_due_days": "Nhập số ngày cần hoàn thành. Yêu cầu nhập giá trị số",
-  "viec_cua_toi.ask_summary": "Nhập Summary công việc",
-  "viec_cua_toi.ask_description": "Nhập Description công việc",
-  "viec_cua_toi.ask_file": "Bạn có muốn thêm file không. Nếu muốn thì upload file. Nếu không thì nói Không",
-  "viec_cua_toi.ask_checklist": "Bạn có muốn thêm việc trong checklist không. Nếu muốn hãy viết luôn công việc. Nếu không thì nói Không",
-  "viec_cua_toi.ask_due_days": "Nhập số ngày cần hoàn thành. Yêu cầu nhập giá trị số"
+  "user_inputs": {
+    "intent_aliases": {
+      "ASSIGN_TASK": [
+        "/giaoviec"
+      ],
+      "MY_TASK": [
+        "/vieccuatoi"
+      ]
+    }
+  },
+  "bot_replies": {
+    "TPL_UNKNOWN_INTENT": "Mình chưa hiểu yêu cầu. Bạn hãy nhập đúng 1 trong 2 lệnh: \"/giaoviec\" hoặc \"/vieccuatoi\".",
+    "TPL_ASK_SENDER_JIRA_ID": "Bạn chưa liên kết Jira. Vui lòng nhập jira_account_id của bạn.",
+    "TPL_NOT_PROJECT_MEMBER": "Bạn chưa là thành viên của project trên Jira. Vui lòng kiểm tra lại quyền trước khi dùng bot.",
+    "TPL_NOT_ADMIN_ASSIGN": "Chỉ Admin của project mới có quyền giao việc.",
+    "TPL_ASK_ASSIGNEE": "Người này chưa liên kết Jira. Vui lòng nhập jira_account_id của người được giao việc.",
+    "TPL_ASSIGNEE_NOT_MEMBER": "Người được giao không phải thành viên của project. Hãy kiểm tra Jira trước khi giao việc.",
+    "TPL_ASK_SUMMARY": "Nhập tiêu đề công việc (summary).",
+    "TPL_ASK_DESCRIPTION": "Nhập mô tả công việc (description).",
+    "TPL_ASK_ATTACHMENTS": "Bạn có muốn thêm file đính kèm không? Nếu có hãy upload file. Nếu không, nhập \"Không\". Khi upload xong, nhập \"Xong\".",
+    "TPL_ASK_CHECKLIST": "Bạn có muốn thêm checklist không? Nếu có, nhập mỗi dòng một việc. Nhập \"Không\" để bỏ qua, hoặc \"Xong\" để kết thúc checklist.",
+    "TPL_ASK_DUE_DAYS": "Nhập số ngày cần hoàn thành (số nguyên dương).",
+    "TPL_INVALID_DUE_DAYS": "Giá trị không hợp lệ. Vui lòng nhập số nguyên dương cho số ngày hoàn thành.",
+    "TPL_CONFIRM_CREATE": "Xác nhận tạo công việc với thông tin trên? Nhập \"Có\" để tạo, hoặc \"Không\" để hủy.",
+    "TPL_INVALID_CONFIRM": "Giá trị không hợp lệ. Vui lòng nhập \"Có\" hoặc \"Không\".",
+    "TPL_CANCELLED": "Đã hủy thao tác hiện tại. Bạn có thể nhập lại: \"giao việc\" hoặc \"việc của tôi\"."
+  }
 }
 
