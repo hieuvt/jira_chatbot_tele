@@ -9,10 +9,15 @@
 - `email`
 - `api_token`
 - `project_key`
-- `issue_type_key`
-- `subtask_issue_type_key`
-- `admin_project_role_name` (default `Administrators`)
+- `issue_type_id`
+- `subtask_issue_type_id`
 - `attachment_max_bytes`
+- `http.timeout_seconds` (default `20`)
+- `http.retry_count` (default `3`)
+- `http.retry_backoff_seconds` (default `1.0`)
+- `search.max_results` (default `50`)
+- `search.max_pages` (default `20`)
+- `timezone` (`Asia/Ho_Chi_Minh`)
 
 ## due.notification
 - `window_days`

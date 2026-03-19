@@ -10,9 +10,8 @@
     "email": "user@company.com",
     "api_token": "JIRA_API_TOKEN",
     "project_key": "ABC",
-    "issue_type_key": "TASK",
-    "subtask_issue_type_key": "SUBTASK",
-    "admin_project_role_name": "Administrators",
+    "issue_type_id": "10009",
+    "subtask_issue_type_id": "10010",
     "attachment_max_bytes": 10485760
   },
   "due": {
