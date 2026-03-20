@@ -413,8 +413,11 @@ class ConversationStateMachine:
                     ],
                 )
             self._end_session(key)
+            # Telegram tự động biến URL thành link click được.
+            issue_url = f"{self._jira_client.base_url}/browse/{issue_key}" if getattr(self._jira_client, "base_url", None) else None
             return (
                 f"Tạo công việc thành công: {issue_key}\n"
+                f"{f'Link Jira: {issue_url}\n' if issue_url else ''}"
                 f"Số checklist items: {len(subtask_keys)}\n"
                 f"Số file upload: {len(uploaded_ids)}"
             )
