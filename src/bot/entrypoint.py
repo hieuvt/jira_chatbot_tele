@@ -4,8 +4,11 @@ from __future__ import annotations
 
 import json
 import sys
+import uuid
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from telegram.ext import Application
 
@@ -15,10 +18,12 @@ if str(project_root) not in sys.path:
 
 from src.bot.handlers import register_handlers
 from src.common.logging import get_logger
+from src.common.errors import JiraClientError
 from src.conversation.state_machine import ConversationStateMachine, StateMachineConfig
 from src.conversation.templates import load_template_bundle
 from src.jira.client import JiraClient
-from src.scheduler.jobs import build_scheduler
+from src.reports.reporter import Reporter
+from src.scheduler.jobs import build_scheduler, configure_phase5_report_jobs
 from src.storage.users_store import UsersStore
 
 
@@ -60,9 +65,19 @@ def bootstrap_app() -> dict[str, Any]:
     telegram_cfg = runtime.get("telegram", {}) if isinstance(runtime.get("telegram"), dict) else {}
     attachments_cfg = telegram_cfg.get("attachments", {}) if isinstance(telegram_cfg.get("attachments"), dict) else {}
 
+    due_cfg = runtime.get("due", {}) if isinstance(runtime.get("due"), dict) else {}
+    notification_cfg = due_cfg.get("notification", {}) if isinstance(due_cfg.get("notification"), dict) else {}
+    report_timezone = str(notification_cfg.get("report_timezone", "Asia/Ho_Chi_Minh"))
+    window_days = int(notification_cfg.get("window_days", 3))
+    report_times = notification_cfg.get("report_times", ["08:00", "17:00"])
+    if not isinstance(report_times, list):
+        report_times = ["08:00", "17:00"]
+
+    users_store = UsersStore(users_path)
+
     state_machine = ConversationStateMachine(
         jira_client=jira_client,
-        users_store=UsersStore(users_path),
+        users_store=users_store,
         templates=template_bundle.bot_replies,
         intent_aliases=template_bundle.intent_aliases,
         config=StateMachineConfig(
@@ -76,13 +91,74 @@ def bootstrap_app() -> dict[str, Any]:
         ),
     )
 
-    scheduler = build_scheduler(timezone=str(jira.get("timezone", "Asia/Ho_Chi_Minh")))
-    scheduler.start()
-    logger.info("Scheduler started")
-
     token = str(telegram_cfg["bot_token"])
     application = Application.builder().token(token).build()
     register_handlers(application, state_machine)
+
+    reporter = Reporter(
+        jira_client=jira_client,
+        users_store=users_store,
+        project_key=str(jira["project_key"]),
+        bot_token=token,
+        logger=logger,
+    )
+
+    scheduler = build_scheduler(timezone=report_timezone)
+
+    allowed_chat_ids = telegram_cfg.get("allowed_chat_ids", [])
+    telegram_chat_id_first: int | None = None
+    if isinstance(allowed_chat_ids, list) and allowed_chat_ids:
+        try:
+            telegram_chat_id_first = int(str(allowed_chat_ids[0]).strip())
+        except Exception:
+            telegram_chat_id_first = None
+
+    def _phase5_job_callback() -> None:
+        trace_id = uuid.uuid4().hex[:12]
+        if telegram_chat_id_first is None:
+            logger.error("Phase5: allowed_chat_ids missing/invalid. trace_id=%s", trace_id)
+            return
+
+        try:
+            tz = ZoneInfo(report_timezone)
+        except Exception:
+            # Fallback for environments without tzdata (e.g. missing "Asia/Ho_Chi_Minh").
+            if str(report_timezone).lower() == "asia/ho_chi_minh":
+                tz = timezone(timedelta(hours=7))
+            else:
+                tz = timezone.utc
+        now = datetime.now(tz=tz)
+        logger.info("Phase5 report start trace_id=%s now=%s", trace_id, now.isoformat())
+        try:
+            message_texts = reporter.build_report_messages(window_days=window_days, now=now)
+            reporter.send_report(telegram_chat_id=telegram_chat_id_first, message_texts=message_texts)
+            logger.info("Phase5 report sent trace_id=%s messages=%d", trace_id, len(message_texts))
+        except JiraClientError:
+            logger.exception("Phase5: Jira error trace_id=%s", trace_id)
+            try:
+                reporter.send_report(
+                    telegram_chat_id=telegram_chat_id_first, message_texts=["hệ thống đang lỗi"]
+                )
+            except Exception:
+                logger.exception("Phase5: failed to send error message trace_id=%s", trace_id)
+        except Exception:
+            logger.exception("Phase5: unexpected error trace_id=%s", trace_id)
+            try:
+                reporter.send_report(
+                    telegram_chat_id=telegram_chat_id_first, message_texts=["hệ thống đang lỗi"]
+                )
+            except Exception:
+                logger.exception("Phase5: failed to send error message trace_id=%s", trace_id)
+
+    configure_phase5_report_jobs(
+        scheduler=scheduler,
+        timezone=report_timezone,
+        report_times=report_times,
+        job_callback=_phase5_job_callback,
+    )
+
+    scheduler.start()
+    logger.info("Scheduler started (Phase5)")
 
     return {"logger": logger, "application": application, "scheduler": scheduler}
 

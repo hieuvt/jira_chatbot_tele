@@ -167,8 +167,9 @@ class JiraClient:
     ) -> dict[str, list[JiraIssueRecord]]:
         end_time = query.now + timedelta(days=query.window_days)
         jql = (
-            f'project = "{query.project_key}" AND reporter = "{query.reporter_account_id}" '
-            f'AND duedate IS NOT EMPTY AND duedate <= "{end_time.strftime("%Y-%m-%d")}"'
+            f'project = "{query.project_key}" '
+            f'AND duedate IS NOT EMPTY '
+            f'AND duedate <= "{end_time.strftime("%Y-%m-%d")}"'
         )
         grouped: dict[str, list[JiraIssueRecord]] = {}
         start_at = 0

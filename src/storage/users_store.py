@@ -35,6 +35,37 @@ class UsersStore:
             return value.strip()
         return None
 
+    def get_reverse_mapping(self) -> dict[str, str]:
+        """
+        Reverse mapping used by Phase 5 reporter:
+        - key: jira_account_id
+        - value: telegram_account_id
+        """
+        data = self._read_file(create_if_missing=True)
+        reverse: dict[str, str] = {}
+        for telegram_id_raw, jira_value_raw in data.items():
+            if not isinstance(jira_value_raw, str):
+                continue
+            jira_id = jira_value_raw.strip()
+            telegram_id = str(telegram_id_raw).strip()
+            if not jira_id or not telegram_id:
+                continue
+
+            # If multiple telegram users map to the same Jira account,
+            # keep the smallest numeric telegram id (best-effort deterministic).
+            existing = reverse.get(jira_id)
+            if existing is None:
+                reverse[jira_id] = telegram_id
+                continue
+
+            try:
+                if int(telegram_id) < int(existing):
+                    reverse[jira_id] = telegram_id
+            except ValueError:
+                if telegram_id < existing:
+                    reverse[jira_id] = telegram_id
+        return reverse
+
     def upsert_mapping(self, telegram_account_id: str, jira_account_id: str) -> bool:
         telegram_key = str(telegram_account_id).strip() if telegram_account_id is not None else ""
         if not telegram_key:
