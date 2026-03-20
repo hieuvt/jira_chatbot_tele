@@ -32,8 +32,14 @@ def _load_config(config_path: Path) -> dict[str, Any]:
 
 def bootstrap_app() -> dict[str, Any]:
     logger = get_logger("bot.entrypoint")
-    runtime = _load_config(Path("config/config.json"))
-    template_bundle = load_template_bundle(Path("config/templates.json"))
+    # Resolve paths from repo root so users.json/config are stable regardless of CWD.
+    config_path = project_root / "config" / "config.json"
+    templates_path = project_root / "config" / "templates.json"
+    users_path = project_root / "data" / "users.json"
+    logger.info("Users store file: %s", users_path)
+
+    runtime = _load_config(config_path)
+    template_bundle = load_template_bundle(templates_path)
 
     jira = runtime.get("jira", {})
     if not isinstance(jira, dict):
@@ -56,7 +62,7 @@ def bootstrap_app() -> dict[str, Any]:
 
     state_machine = ConversationStateMachine(
         jira_client=jira_client,
-        users_store=UsersStore(Path("data/users.json")),
+        users_store=UsersStore(users_path),
         templates=template_bundle.bot_replies,
         intent_aliases=template_bundle.intent_aliases,
         config=StateMachineConfig(

@@ -191,7 +191,13 @@ class ConversationStateMachine:
 
             if buffer.state == ConversationState.S2_CHECK_SENDER_MEMBER:
                 assert buffer.sender_jira_account_id
-                is_member = self._jira_client.check_project_membership(buffer.sender_jira_account_id, self._config.project_key)
+                try:
+                    is_member = self._jira_client.check_project_membership(
+                        buffer.sender_jira_account_id, self._config.project_key
+                    )
+                except JiraClientError as exc:
+                    self._end_session(key)
+                    return self._map_jira_error(exc)
                 if not is_member:
                     self._end_session(key)
                     return self._tpl("TPL_NOT_PROJECT_MEMBER")
@@ -204,7 +210,13 @@ class ConversationStateMachine:
 
             if buffer.state == ConversationState.S3_CHECK_SENDER_ADMIN:
                 assert buffer.sender_jira_account_id
-                is_admin = self._jira_client.check_project_admin(buffer.sender_jira_account_id, self._config.project_key)
+                try:
+                    is_admin = self._jira_client.check_project_admin(
+                        buffer.sender_jira_account_id, self._config.project_key
+                    )
+                except JiraClientError as exc:
+                    self._end_session(key)
+                    return self._map_jira_error(exc)
                 if not is_admin:
                     self._end_session(key)
                     return self._tpl("TPL_NOT_ADMIN_ASSIGN")
@@ -216,9 +228,13 @@ class ConversationStateMachine:
 
             if buffer.state == ConversationState.S5_CHECK_ASSIGNEE_MEMBER:
                 assert buffer.assignee_jira_account_id
-                is_member = self._jira_client.check_project_membership(
-                    buffer.assignee_jira_account_id, self._config.project_key
-                )
+                try:
+                    is_member = self._jira_client.check_project_membership(
+                        buffer.assignee_jira_account_id, self._config.project_key
+                    )
+                except JiraClientError as exc:
+                    self._end_session(key)
+                    return self._map_jira_error(exc)
                 if not is_member:
                     self._end_session(key)
                     return self._tpl("TPL_ASSIGNEE_NOT_MEMBER")
@@ -424,6 +440,13 @@ class ConversationStateMachine:
         return f"{info}{self._tpl('TPL_CONFIRM_CREATE')}"
 
     def _map_jira_error(self, error: JiraClientError) -> str:
+        if error.code == "JIRA_PERMISSION_DENIED":
+            return (
+                "Bot chưa đủ quyền kiểm tra project trên Jira (Browse/Admin project). "
+                "Vui lòng liên hệ quản trị viên cấp quyền cho tài khoản bot."
+            )
+        if error.code == "JIRA_NETWORK_ERROR":
+            return "Không kết nối được Jira. Vui lòng thử lại sau."
         if error.code == "JIRA_AUTH_OR_PERMISSION":
             return "Bot chưa đủ quyền thao tác trên Jira. Vui lòng liên hệ quản trị viên."
         if error.code in {"JIRA_BAD_REQUEST", "JIRA_INVALID_DUE_DATE"}:

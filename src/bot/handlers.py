@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from telegram import Message, Update
+from telegram import ForceReply, Message, Update
 from telegram.ext import Application, ContextTypes, MessageHandler, filters
 
 from src.conversation.state_machine import FileMeta, MessageInput, build_filename
@@ -72,6 +72,30 @@ def _extract_mentioned_user_id(message: Message) -> int | None:
 
 
 def register_handlers(application: Application, state_machine: object) -> None:
+    def _needs_user_reply(output: str) -> bool:
+        """
+        In group/supergroup, Bot Privacy Mode prevents normal text messages from reaching the bot.
+        We only need ForceReply when the bot is asking for the user to type the next input
+        (e.g., jira_account_id, assignee, summary, description, etc.).
+        """
+        if not output:
+            return False
+
+        # Prompts that require free-form user input (not a '/' command).
+        markers = (
+            "Vui lòng nhập jira_account_id",
+            "Bạn chưa liên kết Jira",
+            "Người này chưa liên kết Jira",
+            "Chọn người được giao việc",
+            "Nhập tiêu đề công việc",
+            "Nhập mô tả công việc",
+            "Bạn có muốn thêm file đính kèm",
+            "Bạn có muốn thêm checklist",
+            "Nhập số ngày cần hoàn thành",
+            "Xác nhận tạo công việc",
+        )
+        return any(m in output for m in markers)
+
     async def on_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if not update.message or not update.effective_chat or not update.effective_user:
             return
@@ -92,7 +116,16 @@ def register_handlers(application: Application, state_machine: object) -> None:
             attachments=attachments,
         )
         output = state_machine.handle_message(message_input)
-        await tg_message.reply_text(output)
+        # In groups, Bot Privacy Mode hides plain-text messages unless they are
+        # commands, @mentions, or replies to the bot. ForceReply nudges the client
+        # to reply to our message so the next user input is delivered to the bot.
+        chat_type = getattr(update.effective_chat, "type", None)
+        reply_markup = (
+            ForceReply(selective=True, input_field_placeholder="…")
+            if chat_type in ("group", "supergroup") and _needs_user_reply(output)
+            else None
+        )
+        await tg_message.reply_text(output, reply_markup=reply_markup)
 
     application.add_handler(MessageHandler(filters.ALL, on_message))
 
