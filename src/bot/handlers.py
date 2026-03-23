@@ -137,6 +137,35 @@ def _extract_mentioned_user_id(message: Message) -> int | None:
     for entity in entities:
         if entity.type == "text_mention" and entity.user:
             return entity.user.id
+        if entity.type == "mention" and entity.user:
+            # Some clients may populate `user` for `mention`; handle best-effort.
+            return entity.user.id
+    return None
+
+
+def _extract_mentioned_user_username(message: Message) -> str | None:
+    """
+    Extract Telegram username from mention entities, if available.
+
+    - `text_mention`: may include full user object (username may be missing).
+    - `mention`: often only provides the textual @username (no user object).
+    """
+    entities = message.entities or []
+    text = message.text or message.caption or ""
+    for entity in entities:
+        if entity.type == "text_mention" and entity.user:
+            username = getattr(entity.user, "username", None)
+            if isinstance(username, str) and username.strip():
+                return username.strip()
+        if entity.type == "mention":
+            # Best-effort: parse "@username" from message text using entity offsets.
+            offset = int(getattr(entity, "offset", 0))
+            length = int(getattr(entity, "length", 0))
+            if length <= 0 or offset < 0 or offset + length > len(text):
+                continue
+            raw = text[offset : offset + length].strip()
+            if raw:
+                return raw.lstrip("@").strip()
     return None
 
 
@@ -163,8 +192,16 @@ def register_handlers(
             chat_id=update.effective_chat.id,
             user_id=update.effective_user.id,
             text=tg_message.text or tg_message.caption,
-            reply_to_user_id=(tg_message.reply_to_message.from_user.id if tg_message.reply_to_message else None),
+            reply_to_user_id=(
+                tg_message.reply_to_message.from_user.id if tg_message.reply_to_message else None
+            ),
+            reply_to_username=(
+                (tg_message.reply_to_message.from_user.username)
+                if tg_message.reply_to_message and tg_message.reply_to_message.from_user
+                else None
+            ),
             mentioned_user_id=_extract_mentioned_user_id(tg_message),
+            mentioned_username=_extract_mentioned_user_username(tg_message),
             attachments=attachments,
         )
         output = state_machine.handle_message(message_input)
