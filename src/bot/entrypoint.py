@@ -93,7 +93,8 @@ def bootstrap_app() -> dict[str, Any]:
 
     token = str(telegram_cfg["bot_token"])
     application = Application.builder().token(token).build()
-    register_handlers(application, state_machine)
+    tpl_cancelled = str(template_bundle.bot_replies.get("TPL_CANCELLED", ""))
+    register_handlers(application, state_machine, tpl_cancelled=tpl_cancelled)
 
     reporter = Reporter(
         jira_client=jira_client,

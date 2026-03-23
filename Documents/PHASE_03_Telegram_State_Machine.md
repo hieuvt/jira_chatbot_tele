@@ -13,13 +13,13 @@
 ## 2. Từ vựng và quy ước dùng chung
 - Từ khóa hệ thống:
   - `KHONG` = một trong: `không`, `khong`, `no` (không phân biệt hoa thường, trim khoảng trắng)
-  - `HUY` = một trong: `hủy`, `huy`, `/cancel`
+  - `HUY` = một trong: `hủy`, `huy`, `/huy`, `/cancel` (và dạng `/huy@TenBot` trong group)
   - `XONG` = một trong: `xong`, `done`, `/done`
   - `CO` = một trong: `có`, `co`, `yes` (không phân biệt hoa thường, trim khoảng trắng)
 - Bất kỳ state nào nếu nhận `HUY`:
   - kết thúc conversation hiện tại
   - clear conversation buffer
-  - trả template: `Đã hủy thao tác hiện tại. Bạn có thể nhập lại: "giao việc" hoặc "việc của tôi".`
+  - trả template: `Đã hủy giao việc.`
 - Group/supergroup:
   - Bot cho phép nhiều người thao tác song song trong cùng 1 group.
   - Conversation buffer key = `(chat_id, user_id)` (mỗi người 1 phiên trong cùng group).
@@ -243,7 +243,7 @@ Quy ước tên file cho media không có filename:
 - `TPL_INVALID_CONFIRM`:
   - `Giá trị không hợp lệ. Vui lòng nhập "Có" hoặc "Không".`
 - `TPL_CANCELLED`:
-  - `Đã hủy thao tác hiện tại. Bạn có thể nhập lại: "giao việc" hoặc "việc của tôi".`
+  - `Đã hủy giao việc.`
 
 ## 8. Integration points
 - Gọi `JiraClient` (Phase 2):

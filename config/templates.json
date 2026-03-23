@@ -24,7 +24,7 @@
     "TPL_INVALID_DUE_DAYS": "Giá trị không hợp lệ. Vui lòng nhập số nguyên dương cho số ngày hoàn thành.",
     "TPL_CONFIRM_CREATE": "Xác nhận tạo công việc với thông tin trên? Nhập \"Có\" để tạo, hoặc \"Không\" để hủy.",
     "TPL_INVALID_CONFIRM": "Giá trị không hợp lệ. Vui lòng nhập \"Có\" hoặc \"Không\".",
-    "TPL_CANCELLED": "Đã hủy thao tác hiện tại. Bạn có thể nhập lại: \"giao việc\" hoặc \"việc của tôi\"."
+    "TPL_CANCELLED": "Đã hủy giao việc."
   }
 }
 

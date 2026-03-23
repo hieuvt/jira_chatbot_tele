@@ -19,8 +19,16 @@ def is_khong(raw_value: str) -> bool:
     return normalize_token(raw_value) in {"không", "khong", "no"}
 
 
+def _normalize_slash_command_token(raw_value: str) -> str:
+    """Strip @bot suffix for Telegram commands in groups (e.g. /huy@MyBot)."""
+    token = normalize_token(raw_value)
+    if token.startswith("/") and "@" in token:
+        return token.split("@", 1)[0]
+    return token
+
+
 def is_huy(raw_value: str) -> bool:
-    return normalize_token(raw_value) in {"hủy", "huy", "/cancel"}
+    return _normalize_slash_command_token(raw_value) in {"hủy", "huy", "/cancel", "/huy"}
 
 
 def is_xong(raw_value: str) -> bool:

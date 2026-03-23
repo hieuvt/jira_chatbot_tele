@@ -87,6 +87,22 @@ def test_attachment_limits() -> int:
     return failures
 
 
+def test_slash_huy_cancels_session() -> int:
+    sender = "jira-user-7601"
+    machine, _, _ = build_state_machine(user_mapping={"7601": sender}, member_ids={sender})
+    chat_id = 3007
+    user_id = 7601
+    machine.handle_message(make_text(chat_id, user_id, "/vieccuatoi"))
+    failures = 0
+    failures += _check((chat_id, user_id) in machine._sessions, "session active before /huy")  # noqa: SLF001
+    msg = machine.handle_message(make_text(chat_id, user_id, "/huy"))
+    failures += _check("Đã hủy giao việc" in msg, "/huy returns cancel template")
+    failures += _check((chat_id, user_id) not in machine._sessions, "/huy clears session")  # noqa: SLF001
+    msg_at = machine.handle_message(make_text(chat_id, user_id, "/huy@test_bot"))
+    failures += _check("Đã hủy giao việc" in msg_at, "/huy@bot returns cancel template")
+    return failures
+
+
 def test_timeout() -> int:
     sender = "jira-user-7401"
     machine, _, _ = build_state_machine(user_mapping={"7401": sender}, member_ids={sender})
@@ -132,6 +148,7 @@ def main() -> int:
     failures += test_invalid_due_days()
     failures += test_not_admin_assign()
     failures += test_attachment_limits()
+    failures += test_slash_huy_cancels_session()
     failures += test_timeout()
     failures += test_jira_error_mapping()
     if failures:
