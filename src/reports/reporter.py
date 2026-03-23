@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
+import html as html_lib
 from typing import Any
 
 from telegram import Bot
@@ -153,13 +154,27 @@ class Reporter:
 
         messages: list[str] = [overall_text]
 
+        jira_base_url = getattr(self.jira_client, "base_url", "") or ""
+        jira_base_url = jira_base_url.rstrip("/")
+
         for assignee in model.assignees:
             lines: list[str] = [f"Assignee: {assignee.label}"]
 
             if assignee.overdue:
                 lines.append("Quá hạn:")
                 for item in assignee.overdue:
-                    lines.append(f"- {item.issue_key}: {item.summary} (due: {item.due_date.isoformat()})")
+                    escaped_issue = html_lib.escape(item.issue_key)
+                    escaped_summary = html_lib.escape(item.summary)
+                    if jira_base_url:
+                        issue_url = f"{jira_base_url}/browse/{item.issue_key}"
+                        issue_anchor = f'<a href="{html_lib.escape(issue_url, quote=True)}">{escaped_issue}</a>'
+                        lines.append(
+                            f"- {issue_anchor}: {escaped_summary} (due: {item.due_date.isoformat()})"
+                        )
+                    else:
+                        lines.append(
+                            f"- {escaped_issue}: {escaped_summary} (due: {item.due_date.isoformat()})"
+                        )
 
             if assignee.upcoming:
                 # One empty line between overdue and upcoming headings (only if both exist).
@@ -167,9 +182,18 @@ class Reporter:
                     lines.append("")
                 lines.append("Sắp đến hạn:")
                 for item in assignee.upcoming:
-                    lines.append(
-                        f"- {item.issue_key}: {item.summary} (due: {item.due_date.isoformat()})"
-                    )
+                    escaped_issue = html_lib.escape(item.issue_key)
+                    escaped_summary = html_lib.escape(item.summary)
+                    if jira_base_url:
+                        issue_url = f"{jira_base_url}/browse/{item.issue_key}"
+                        issue_anchor = f'<a href="{html_lib.escape(issue_url, quote=True)}">{escaped_issue}</a>'
+                        lines.append(
+                            f"- {issue_anchor}: {escaped_summary} (due: {item.due_date.isoformat()})"
+                        )
+                    else:
+                        lines.append(
+                            f"- {escaped_issue}: {escaped_summary} (due: {item.due_date.isoformat()})"
+                        )
 
             messages.append("\n".join(lines))
 
@@ -178,7 +202,7 @@ class Reporter:
     async def _send_messages_async(self, *, telegram_chat_id: int, message_texts: list[str]) -> None:
         for idx, text in enumerate(message_texts):
             try:
-                await self._bot.send_message(chat_id=telegram_chat_id, text=text)
+                await self._bot.send_message(chat_id=telegram_chat_id, text=text, parse_mode="HTML")
             except Exception as exc:
                 raise
 

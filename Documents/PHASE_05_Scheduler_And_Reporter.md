@@ -54,9 +54,9 @@ Khuyến nghị dùng 2 block tách rõ (tránh quá dài):
 - Block 2: chi tiết theo assignee
   - `Assignee: <telegram_account_id | Unassigned>`
   - `Quá hạn:`
-    - `- <ISSUEKEY>: <summary> (due: <YYYY-MM-DD>)`
+    - `- <a href="{jiraBaseUrl}/browse/<ISSUEKEY>"><ISSUEKEY></a>: <summary> (due: <YYYY-MM-DD>)`
   - `Sắp đến hạn:`
-    - `- <ISSUEKEY>: <summary> (due: <YYYY-MM-DD>)`
+    - `- <a href="{jiraBaseUrl}/browse/<ISSUEKEY>"><ISSUEKEY></a>: <summary> (due: <YYYY-MM-DD>)`
 
 > Trong Block 2: giữa phần `Quá hạn` và phần `Sắp đến hạn` có **1 dòng trống**; giữa các dòng issue (bên trong cùng một phần) **không** dùng dòng trống.
 
