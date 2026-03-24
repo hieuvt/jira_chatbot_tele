@@ -4,11 +4,50 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from telegram import ForceReply, Message, Update
+from telegram import ForceReply, Message, Update, User
 from telegram.error import TelegramError
 from telegram.ext import Application, ContextTypes, MessageHandler, filters
 
 from src.conversation.state_machine import FileMeta, MessageInput, build_filename
+
+
+def _telegram_user_name_for_store(user: User) -> str:
+    """Identifier-first label for users.json `user_name` (username, else name, else id)."""
+    username = getattr(user, "username", None)
+    if isinstance(username, str) and username.strip():
+        return username.strip().lstrip("@")
+    parts: list[str] = []
+    fn = getattr(user, "first_name", None)
+    ln = getattr(user, "last_name", None)
+    if isinstance(fn, str) and fn.strip():
+        parts.append(fn.strip())
+    if isinstance(ln, str) and ln.strip():
+        parts.append(ln.strip())
+    joined = " ".join(parts).strip()
+    if joined:
+        return joined
+    return str(user.id)
+
+
+def _telegram_display_name_only(user: User) -> str:
+    """Profile display name: first + last; empty if unset (per Phase 4 contract)."""
+    parts: list[str] = []
+    fn = getattr(user, "first_name", None)
+    ln = getattr(user, "last_name", None)
+    if isinstance(fn, str) and fn.strip():
+        parts.append(fn.strip())
+    if isinstance(ln, str) and ln.strip():
+        parts.append(ln.strip())
+    return " ".join(parts).strip()
+
+
+def _extract_mention_user(message: Message) -> User | None:
+    for entity in message.entities or []:
+        if entity.type == "text_mention" and entity.user:
+            return entity.user
+        if entity.type == "mention" and entity.user:
+            return entity.user
+    return None
 
 
 def _needs_user_reply(output: str) -> bool:
@@ -188,6 +227,23 @@ def register_handlers(
             if meta:
                 attachments.append(meta)
 
+        eu = update.effective_user
+        sender_user_name = _telegram_user_name_for_store(eu)
+        sender_telegram_display_name = _telegram_display_name_only(eu)
+
+        reply_fu = tg_message.reply_to_message.from_user if tg_message.reply_to_message else None
+        reply_target_user_name = _telegram_user_name_for_store(reply_fu) if reply_fu else None
+        reply_target_telegram_display_name = _telegram_display_name_only(reply_fu) if reply_fu else None
+
+        mu = _extract_mention_user(tg_message)
+        if mu:
+            mentioned_user_name = _telegram_user_name_for_store(mu)
+            mentioned_telegram_display_name = _telegram_display_name_only(mu)
+        else:
+            un = _extract_mentioned_user_username(tg_message)
+            mentioned_user_name = un if un else None
+            mentioned_telegram_display_name = "" if un else None
+
         message_input = MessageInput(
             chat_id=update.effective_chat.id,
             user_id=update.effective_user.id,
@@ -202,6 +258,12 @@ def register_handlers(
             ),
             mentioned_user_id=_extract_mentioned_user_id(tg_message),
             mentioned_username=_extract_mentioned_user_username(tg_message),
+            sender_user_name=sender_user_name,
+            sender_telegram_display_name=sender_telegram_display_name,
+            reply_target_user_name=reply_target_user_name,
+            reply_target_telegram_display_name=reply_target_telegram_display_name,
+            mentioned_user_name=mentioned_user_name,
+            mentioned_telegram_display_name=mentioned_telegram_display_name or "",
             attachments=attachments,
         )
         output = state_machine.handle_message(message_input)

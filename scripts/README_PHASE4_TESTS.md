@@ -12,7 +12,7 @@ Mục tiêu:
 - `upsert_mapping()` no-op khi input rỗng/invalid.
 - Không overwrite mapping hợp lệ đã tồn tại.
 - Cho phép overwrite khi value trong file là rỗng/invalid.
-- Khi `users.json` là JSON lỗi: upsert vẫn recover và `users.json` sau cùng là JSON hợp lệ.
+- Khi `users.json` là JSON lỗi: upsert vẫn recover và `users.json` sau cùng là JSON array hợp lệ.
 - Kiểm tra `users.json.tmp` không còn sau upsert thành công.
 
 ### 1.2 Test concurrency + lock timeout
@@ -35,9 +35,9 @@ Chuẩn bị:
 2. Gửi `/giaoviec` (hoặc `/vieccuatoi`).
 3. Bot sẽ hỏi bạn nhập `jira_account_id`.
 4. Gửi vào một giá trị như `jira-user-123`.
-5. Kiểm tra `data/users.json`:
-   - Có key đúng `telegram_user_id` (dạng string).
-   - Value đúng `jira_account_id` bạn vừa nhập.
+5. Kiểm tra `data/users.json` (mảng các object `user_name`, `telegram_id`, `telegram_display_name`, `jira_id`):
+   - Có phần tử với `telegram_id` đúng user (string).
+   - `jira_id` đúng giá trị bạn vừa nhập.
 
 ### 2.2 Kiểm tra “không overwrite mapping hợp lệ”
 1. Với cùng Telegram user ở bước 2.1, gửi lại `/giaoviec` (hoặc `/vieccuatoi`).
@@ -46,7 +46,7 @@ Chuẩn bị:
 
 ### 2.3 Kiểm tra “overwrite khi mapping trong file invalid”
 1. Dừng bot.
-2. Sửa `data/users.json`: đặt value của key Telegram user đó thành `""` hoặc `"   "` (hoặc một value không phải string).
+2. Sửa `data/users.json`: với bản ghi của user đó, đặt `jira_id` thành `""` hoặc `"   "` (hoặc không phải string trong object legacy `{...}` nếu còn format cũ).
 3. Khởi động lại bot.
 4. Gửi `/giaoviec` (hoặc `/vieccuatoi`) với Telegram user đó.
 5. Bot sẽ lại yêu cầu nhập `jira_account_id`.

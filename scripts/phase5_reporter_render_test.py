@@ -65,13 +65,28 @@ def main() -> int:
     window_days = 3
     end_day = today  # for readability: upcoming <= today + 3
 
-    # users.json contract: telegram_account_id -> jira_account_id
-    # reverse mapping will be: jira_account_id -> telegram_account_id
-    # jira-2 -> telegram "2"
-    # jira-1 -> telegram "10"
+    # users.json: array of records (telegram_id <-> jira_id); reverse map for reporter
     with tempfile.TemporaryDirectory() as tmp:
         users_path = Path(tmp) / "users.json"
-        users_path.write_text(json.dumps({"2": "jira-2", "10": "jira-1"}), encoding="utf-8")
+        users_path.write_text(
+            json.dumps(
+                [
+                    {
+                        "user_name": "",
+                        "telegram_id": "2",
+                        "telegram_display_name": "",
+                        "jira_id": "jira-2",
+                    },
+                    {
+                        "user_name": "",
+                        "telegram_id": "10",
+                        "telegram_display_name": "",
+                        "jira_id": "jira-1",
+                    },
+                ]
+            ),
+            encoding="utf-8",
+        )
         users_store = UsersStore(users_path)
 
         grouped: dict[str, list[JiraIssueRecord]] = {

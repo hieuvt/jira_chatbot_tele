@@ -86,7 +86,15 @@ class FakeUsersStore:
             return None
         return value
 
-    def upsert_mapping(self, telegram_account_id: str, jira_account_id: str) -> bool:
+    def upsert_mapping(
+        self,
+        telegram_account_id: str,
+        jira_account_id: str,
+        *,
+        user_name: str = "",
+        telegram_display_name: str = "",
+    ) -> bool:
+        _ = (user_name, telegram_display_name)
         if telegram_account_id in self._data:
             return False
         self._data[telegram_account_id] = jira_account_id

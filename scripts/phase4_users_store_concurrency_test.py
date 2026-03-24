@@ -50,7 +50,12 @@ def test_concurrent_upsert_single_key() -> int:
 
         def worker(i: int) -> bool:
             s = UsersStore(p)  # separate instance -> tests lock is cross-instance
-            return s.upsert_mapping(telegram_id, candidates[i % len(candidates)])
+            return s.upsert_mapping(
+                telegram_id,
+                candidates[i % len(candidates)],
+                user_name="u",
+                telegram_display_name="",
+            )
 
         with ThreadPoolExecutor(max_workers=8) as ex:
             futures = [ex.submit(worker, i) for i in range(25)]
@@ -101,7 +106,7 @@ def test_lock_timeout_no_write() -> int:
         # shorten timeout to make test fast
         store2._LOCK_TIMEOUT_SECONDS = 0.4  # noqa: SLF001
 
-        added = store2.upsert_mapping("1", "jira-timeout")
+        added = store2.upsert_mapping("1", "jira-timeout", user_name="u", telegram_display_name="")
         failures += _check(not added, "lock timeout: upsert returns added=false when lock not acquired")
 
         # Should not have written mapping

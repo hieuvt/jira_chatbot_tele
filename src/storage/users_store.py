@@ -13,7 +13,6 @@ from src.common.logging import get_logger
 
 logger = get_logger("storage.users_store")
 
-
 class UsersStore:
     # Windows file locking via msvcrt.
     # We lock a single byte in a dedicated lock file.
@@ -29,10 +28,14 @@ class UsersStore:
     def get_jira_account_id(self, telegram_account_id: str) -> str | None:
         if telegram_account_id is None or not str(telegram_account_id).strip():
             return None
-        data = self._read_file(create_if_missing=True)
-        value = data.get(str(telegram_account_id).strip())
-        if isinstance(value, str) and value.strip():
-            return value.strip()
+        records = self._read_file(create_if_missing=True)
+        key = str(telegram_account_id).strip()
+        for rec in records:
+            if rec.get("telegram_id") != key:
+                continue
+            jira_raw = rec.get("jira_id")
+            if isinstance(jira_raw, str) and jira_raw.strip():
+                return jira_raw.strip()
         return None
 
     def get_reverse_mapping(self) -> dict[str, str]:
@@ -41,18 +44,17 @@ class UsersStore:
         - key: jira_account_id
         - value: telegram_account_id
         """
-        data = self._read_file(create_if_missing=True)
+        records = self._read_file(create_if_missing=True)
         reverse: dict[str, str] = {}
-        for telegram_id_raw, jira_value_raw in data.items():
-            if not isinstance(jira_value_raw, str):
+        for rec in records:
+            telegram_id = str(rec.get("telegram_id", "")).strip()
+            jira_raw = rec.get("jira_id")
+            if not isinstance(jira_raw, str):
                 continue
-            jira_id = jira_value_raw.strip()
-            telegram_id = str(telegram_id_raw).strip()
+            jira_id = jira_raw.strip()
             if not jira_id or not telegram_id:
                 continue
 
-            # If multiple telegram users map to the same Jira account,
-            # keep the smallest numeric telegram id (best-effort deterministic).
             existing = reverse.get(jira_id)
             if existing is None:
                 reverse[jira_id] = telegram_id
@@ -66,7 +68,14 @@ class UsersStore:
                     reverse[jira_id] = telegram_id
         return reverse
 
-    def upsert_mapping(self, telegram_account_id: str, jira_account_id: str) -> bool:
+    def upsert_mapping(
+        self,
+        telegram_account_id: str,
+        jira_account_id: str,
+        *,
+        user_name: str = "",
+        telegram_display_name: str = "",
+    ) -> bool:
         telegram_key = str(telegram_account_id).strip() if telegram_account_id is not None else ""
         if not telegram_key:
             return False
@@ -75,77 +84,96 @@ class UsersStore:
         if not jira_value:
             return False
 
+        name_stored = str(user_name).strip() if user_name is not None else ""
+        if not name_stored:
+            name_stored = telegram_key
+
+        display_stored = str(telegram_display_name).strip() if telegram_display_name is not None else ""
+
         try:
             with self._acquire_lock():
-                data = self._read_file(create_if_missing=True)
-                existing = data.get(telegram_key)
-                existing_valid = isinstance(existing, str) and existing.strip()
-                if existing_valid:
-                    # Keep mapping if it already exists & is valid.
-                    return False
+                records = self._read_file(create_if_missing=True)
+                idx = _index_by_telegram_id(records, telegram_key)
+                if idx is not None:
+                    existing_jira = records[idx].get("jira_id")
+                    if isinstance(existing_jira, str) and existing_jira.strip():
+                        return False
 
-                data[telegram_key] = jira_value
-                return self._write_atomic(data)
+                new_rec = {
+                    "user_name": name_stored,
+                    "telegram_id": telegram_key,
+                    "telegram_display_name": display_stored,
+                    "jira_id": jira_value,
+                }
+                if idx is not None:
+                    records[idx] = new_rec
+                else:
+                    records.append(new_rec)
+                return self._write_atomic(records)
         except TimeoutError:
             return False
         except OSError:
-            # IO / permission errors or lock errors -> fail closed (no write)
             return False
 
-    def _read_file(self, *, create_if_missing: bool) -> dict[str, Any]:
+    def _read_file(self, *, create_if_missing: bool) -> list[dict[str, str]]:
         # NOTE: this function intentionally does not hold the lock.
         # Callers that need strict atomicity (upsert) must wrap it with _acquire_lock().
         if create_if_missing and not self.file_path.exists():
             try:
                 self.file_path.parent.mkdir(parents=True, exist_ok=True)
-                # Create empty valid JSON for resilience contract.
-                self.file_path.write_text("{}", encoding="utf-8")
+                self.file_path.write_text("[]", encoding="utf-8")
             except OSError:
                 logger.exception("Failed creating users.json for %s", self.file_path)
-                return {}
+                return []
 
         if not self.file_path.exists():
-            return {}
+            return []
 
         try:
             raw = self.file_path.read_text(encoding="utf-8")
         except OSError:
             logger.exception("Failed reading users.json for %s", self.file_path)
-            return {}
+            return []
         if not raw.strip():
-            return {}
+            return []
 
         try:
             content = json.loads(raw)
         except json.JSONDecodeError as exc:
-            # Invalid JSON => treat as empty; upsert will rewrite correct format.
-            # Ops visibility without traceback: recover path is expected, not a crash.
             logger.warning(
                 "Invalid JSON in users.json at %s (treating as empty; recover on upsert): %s",
                 self.file_path,
                 exc.msg,
             )
-            return {}
+            return []
 
-        if not isinstance(content, dict):
-            return {}
+        if isinstance(content, dict):
+            return _dedupe_by_telegram_id(_legacy_dict_to_records(content))
 
-        # Preserve value types for validation logic.
-        return {str(k): v for k, v in content.items()}
+        if isinstance(content, list):
+            return _dedupe_by_telegram_id(_normalize_record_list(content))
 
-    def _write_atomic(self, payload: dict[str, Any]) -> bool:
-        # Ensure JSON keys/values are valid contract types.
-        # Do not "trim" existing string values here: Phase 4 says keep existing valid mappings.
-        normalized: dict[str, str] = {}
-        for k, v in payload.items():
-            key = str(k)
-            if not key:
+        return []
+
+    def _write_atomic(self, records: list[dict[str, str]]) -> bool:
+        normalized: list[dict[str, str]] = []
+        for rec in records:
+            tid = str(rec.get("telegram_id", "")).strip()
+            jira_raw = rec.get("jira_id")
+            if not tid:
                 continue
-            if not isinstance(v, str):
+            if not isinstance(jira_raw, str) or not jira_raw.strip():
                 continue
-            if not v.strip():
-                continue
-            normalized[key] = v
+            normalized.append(
+                {
+                    "user_name": str(rec.get("user_name", "")).strip() or tid,
+                    "telegram_id": tid,
+                    "telegram_display_name": str(rec.get("telegram_display_name", "")).strip(),
+                    "jira_id": jira_raw.strip(),
+                }
+            )
+
+        normalized.sort(key=lambda r: r["telegram_id"])
 
         tmp_path = self.file_path.with_name(f"{self.file_path.name}.tmp")
         try:
@@ -158,7 +186,6 @@ class UsersStore:
             os.replace(tmp_path, self.file_path)
             return True
         except OSError:
-            # Fail closed: do not touch users.json on write/replace errors.
             try:
                 if tmp_path.exists():
                     tmp_path.unlink(missing_ok=True)
@@ -171,14 +198,12 @@ class UsersStore:
         self.file_path.parent.mkdir(parents=True, exist_ok=True)
         lock_file = self.lock_path.open("a+b")
         try:
-            # Ensure there's at least 1 byte so the lock region is valid.
             lock_file.seek(0, os.SEEK_END)
             if lock_file.tell() == 0:
                 lock_file.write(b"0")
                 lock_file.flush()
 
             start = time.monotonic()
-            # Prefer Windows msvcrt; fallback to fcntl on non-Windows.
             try:
                 import msvcrt  # type: ignore
 
@@ -190,7 +215,6 @@ class UsersStore:
                 try:
                     lock_file.seek(0)
                     if use_msvcrt:
-                        # Non-blocking lock; retry until timeout.
                         msvcrt.locking(lock_file.fileno(), msvcrt.LK_NBLCK, self._LOCK_BYTE_LEN)
                     else:  # pragma: no cover
                         import fcntl
@@ -204,7 +228,6 @@ class UsersStore:
 
             yield
         finally:
-            # Unlock + close.
             try:
                 try:
                     import msvcrt  # type: ignore
@@ -221,3 +244,69 @@ class UsersStore:
             except OSError:
                 pass
 
+
+def _dedupe_by_telegram_id(records: list[dict[str, str]]) -> list[dict[str, str]]:
+    """Last record wins per telegram_id (stable order preserved by re-insertion order)."""
+    by_id: dict[str, dict[str, str]] = {}
+    for rec in records:
+        tid = str(rec.get("telegram_id", "")).strip()
+        if not tid:
+            continue
+        by_id[tid] = rec
+    return list(by_id.values())
+
+
+def _index_by_telegram_id(records: list[dict[str, str]], telegram_key: str) -> int | None:
+    for i, rec in enumerate(records):
+        if str(rec.get("telegram_id", "")).strip() == telegram_key:
+            return i
+    return None
+
+
+def _legacy_dict_to_records(content: dict[Any, Any]) -> list[dict[str, str]]:
+    out: list[dict[str, str]] = []
+    for k, v in content.items():
+        tid = str(k).strip()
+        if not tid:
+            continue
+        jira_s = v.strip() if isinstance(v, str) else ""
+        out.append(
+            {
+                "user_name": "",
+                "telegram_id": tid,
+                "telegram_display_name": "",
+                "jira_id": jira_s,
+            }
+        )
+    return out
+
+
+def _normalize_record_list(content: list[Any]) -> list[dict[str, str]]:
+    out: list[dict[str, str]] = []
+    for item in content:
+        if not isinstance(item, dict):
+            continue
+        tid_raw = item.get("telegram_id")
+        if tid_raw is None:
+            continue
+        tid = str(tid_raw).strip()
+        if not tid:
+            continue
+        jira_raw = item.get("jira_id")
+        jira_s = jira_raw.strip() if isinstance(jira_raw, str) else ""
+
+        un = item.get("user_name")
+        user_name = str(un).strip() if isinstance(un, str) else ""
+
+        dn = item.get("telegram_display_name")
+        display_name = str(dn).strip() if isinstance(dn, str) else ""
+
+        out.append(
+            {
+                "user_name": user_name,
+                "telegram_id": tid,
+                "telegram_display_name": display_name,
+                "jira_id": jira_s,
+            }
+        )
+    return out
