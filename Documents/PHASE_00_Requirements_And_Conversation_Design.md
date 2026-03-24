@@ -27,34 +27,30 @@
 - Danh sách state của conversation cho `giao việc` và `việc của tôi`.
 
 ## 2. Chuẩn hóa `users.json`
-Đề xuất format:
-```json
-{
-  "telegram_account_id_1": "jira_account_id_1",
-  "telegram_account_id_2": "jira_account_id_2"
-}
-```
+**Định dạng chuẩn trong code (Phase 4+):** mảng JSON `[]`, mỗi phần tử là object với `user_name`, `telegram_id`, `telegram_display_name`, `jira_id` (xem [Phase 4](./PHASE_04_Users_Store.md)).
+
+**Legacy:** object dạng `{ "telegram_id": "jira_id", ... }` vẫn được đọc và migrate trong bộ nhớ khi load; lần ghi sau chuyển về mảng.
 
 Quy tắc validate:
-- Key và value đều là chuỗi.
-- Nếu `telegram_account_id` có nhưng value rỗng/không hợp lệ -> coi như chưa có mapping.
-- Không overwrite mapping khi đã tồn tại (hiện tại).
+- `telegram_id` và `jira_id` hợp lệ khi là chuỗi không rỗng sau trim.
+- Không overwrite `jira_id` hợp lệ đã có cho cùng `telegram_id` (hiện tại).
 
 ## 3. Chuẩn hóa `config`
-Các trường tối thiểu:
+Các trường tối thiểu (khớp `config/config.example.json` và [schema](../src/config/schema.md)):
 ```json
 {
   "telegram": {
-    "allowed_chat_ids": [123, 456]
+    "bot_token": "TELEGRAM_BOT_TOKEN",
+    "allowed_chat_ids": [-1001234567890],
+    "attachments": { "max_files": 10 }
   },
   "jira": {
     "base_url": "https://your-domain.atlassian.net",
     "email": "user@company.com",
     "api_token": "JIRA_API_TOKEN",
     "project_key": "ABC",
-    "issue_type_key": "TASK",
-    "subtask_issue_type_key": "SUBTASK",
-    "admin_project_role_name": "Administrator",
+    "issue_type_id": "10001",
+    "subtask_issue_type_id": "10002",
     "attachment_max_bytes": 10485760
   },
   "due": {
@@ -63,9 +59,14 @@ Các trường tối thiểu:
       "report_timezone": "Asia/Ho_Chi_Minh",
       "report_times": ["08:00", "17:00"]
     }
+  },
+  "conversation": {
+    "timeout_minutes": 10
   }
 }
 ```
+- Issue type dùng **id** (`issue_type_id`, `subtask_issue_type_id`), không dùng key tên trong config.
+- Quyền Admin project để giao việc: lấy từ **Jira** (role name chứa `admin`, case-insensitive), không cấu hình tên role cố định trong file config.
 
 ## 4. Permission & membership rules (Jira)
 ### 4.1. Thành viên dự án
@@ -75,10 +76,9 @@ Các trường tối thiểu:
     - `bạn không phải là thành viên của project, hãy liên hệ với Admin`
 
 ### 4.2. Admin của dự án (chỉ cho `giao việc`)
-- Khi user nói `giao việc` và muốn giao cho người khác:
-  - Bot kiểm tra user có thuộc Jira project role có tên `config.jira.admin_project_role_name` hay không.
-  - Nếu không: bot trả về:
-    - `Chỉ Admin của project mới có quyền giao việc`
+- Khi user chạy intent giao việc và muốn giao cho người khác:
+  - Bot kiểm tra user có thuộc **Jira project role** mà **tên role chứa `admin`** (case-insensitive) hay không (theo Phase 2).
+  - Nếu không: bot trả template `TPL_NOT_ADMIN_ASSIGN` (nội dung cụ thể trong `config/templates.json`).
 
 ## 5. Due date interpretation
 - “Sắp đến hạn” theo `window_days = N` (khuyến nghị mặc định):
@@ -96,6 +96,8 @@ Rule đề xuất:
 - Checklist text sẽ được dùng làm `summary` hoặc field mô tả sub-task (tùy Jira fields; mặc định summary).
 
 ## 7. Template câu trả lời cố định (theo use case)
+> **Triển khai:** toàn bộ chuỗi bot và alias intent nằm trong `config/templates.json` (`bot_replies`, `user_inputs.intent_aliases`). Mặc định hiện tại: lệnh intent là **`/giaoviec`** và **`/vieccuatoi`** (khớp chữ, không còn prefix tự do `giao việc` / `việc của tôi` trừ khi bạn thêm alias).
+
 ### 7.1. Khi người dùng chưa có `jira_account_id` trong `users.json`
 - `không có thông tin jira account id trong cơ sở dữ liệu. Hãy gửi cho tôi jira account id của bạn `
 
@@ -122,6 +124,8 @@ Rule đề xuất:
 > Lưu ý: các prompt “điền khoảng trống” (Summary/Description/DueDays/Checklist) phải dùng đúng câu chữ trong template để tuân thủ requirement “cấu trúc cố định”.
 
 ## 8. State machine (thiết kế)
+> **Triển khai:** code dùng tên state dạng `S0_START_ASSIGN`, `S1_ASK_SENDER_JIRA_ID`, … trong `src/conversation/state_machine.py` (tương ứng các bước dưới đây).
+
 ### 8.1. States đề xuất cho `giao việc`
 - `IDLE`
 - `VERIFY_SENDER_IN_USERS_DB`

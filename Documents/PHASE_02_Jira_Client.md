@@ -76,27 +76,22 @@ Mỗi checklist item -> 1 sub-task:
 - Non-admin: chỉ được assign cho chính mình.
 
 ## 4. Query issues cho reporter (contract implement)
-### 4.1. Các tiêu chí phân loại
-- “Quá hạn”: `duedate` < thời điểm hiện tại (`now`) theo timezone `Asia/Ho_Chi_Minh`.
-- “Sắp đến hạn”: `duedate` trong [now, now + `window_days`] theo timezone `Asia/Ho_Chi_Minh`.
+### 4.1. Các tiêu chí phân loại (trong `Reporter` sau khi query)
+- `now` và `today` theo timezone báo cáo (`due.notification.report_timezone`, mặc định `Asia/Ho_Chi_Minh`).
+- “Quá hạn”: `duedate` (date-only) **&lt; `today`**.
+- “Sắp đến hạn”: `today` ≤ `duedate` ≤ `today + window_days` (**inclusive**).
 
 ### 4.2. Group theo assignee
-- Với mỗi issue:
-  - lấy `assignee.accountId`
-  - map sang `users.json` để biết telegram user tương ứng
+- Với mỗi issue: lấy `assignee.accountId` (hoặc nhóm `unassigned` nếu không có assignee).
+- `Reporter` map Jira assignee → Telegram qua `users.json` (`get_reverse_mapping`); không lọc theo reporter.
 
-### 4.3. JQL + pagination (để ổn định khi nhiều issue)
-- Search endpoint: `GET /rest/api/3/search`
-- JQL gợi ý:
-  - `project = "{projectKey}" AND reporter = "{reporterAccountId}" AND duedate IS NOT EMPTY`
-  - Lọc window:
-    - quá hạn: `AND duedate < now()`
-    - sắp đến hạn: `AND duedate >= now() AND duedate <= now("+{window_days}d")`
-- Chỉ lấy fields cần thiết: `fields=summary,assignee,duedate,status,project,issuetype`
-- Pagination:
-  - dùng `startAt` + `maxResults`
-  - có `total` để biết còn trang sau
-  - mặc định: `maxResults=50`, `maxPages=20`
+### 4.3. JQL + pagination (triển khai hiện tại trong `JiraClient.query_issues_by_due_date_for_reporter`)
+- **Không** lọc theo `reporter` — báo cáo theo toàn bộ issue có `duedate` trong project (đúng product spec Phase 5).
+- JQL tối thiểu:
+  - `project = "{projectKey}" AND duedate IS NOT EMPTY AND duedate <= "{today+window_days as YYYY-MM-DD}"`
+- Client gọi API search với JQL trên, rồi **lọc thêm trong Python** (`_in_due_window`) để tách đúng overdue vs upcoming.
+- Pagination: `startAt` / `maxResults` / `total`; giới hạn `max_pages` (config `jira.search.max_pages`, mặc định 20).
+- Fields: `summary,assignee,duedate,status,project,issuetype`
 
 ## 5. Config bắt buộc (không hardcode)
 - `config.jira.base_url` (ví dụ `https://<tenant>.atlassian.net`)

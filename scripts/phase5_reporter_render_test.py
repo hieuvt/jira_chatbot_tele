@@ -22,7 +22,7 @@ import json
 import sys
 import tempfile
 from dataclasses import dataclass
-from datetime import datetime, date, timezone
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -61,9 +61,7 @@ def main() -> int:
     # Use UTC for tests: environment may not ship tzdata for "Asia/Ho_Chi_Minh".
     # Reporter classification uses only now.date() (overdue/upcoming based on "today").
     now = datetime(2026, 3, 20, 9, 0, tzinfo=timezone.utc)
-    today = date(2026, 3, 20)
     window_days = 3
-    end_day = today  # for readability: upcoming <= today + 3
 
     # users.json: array of records (telegram_id <-> jira_id); reverse map for reporter
     with tempfile.TemporaryDirectory() as tmp:

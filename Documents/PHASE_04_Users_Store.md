@@ -38,6 +38,11 @@ Hành vi mapping:
 ### 3.3. `get_reverse_mapping() -> dict[jira_id, telegram_id]`
 - Dùng cho Phase 5 reporter; logic chọn `telegram_id` nhỏ nhất khi nhiều Telegram trùng một Jira giữ nguyên.
 
+### 3.4. `get_user_record_by_telegram_id(telegram_account_id) -> dict | None`
+- Trả về một object chuẩn hóa với các key string: `user_name`, `telegram_id`, `telegram_display_name`, `jira_id` (có thể rỗng từng field).
+- `None` nếu không có bản ghi khớp `telegram_id`.
+- Dùng cho Reporter (và các chỗ cần đủ metadata user từ file).
+
 ## 4. Atomic write & concurrency (đặc biệt trên Windows)
 - File lock khi ghi; lock bao trọn read/validate/write trong `upsert_mapping()`.
 - Ghi `users.json.tmp` rồi `replace` sang `users.json`.

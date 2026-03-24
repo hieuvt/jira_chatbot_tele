@@ -3,7 +3,7 @@
 ## 1. Mục tiêu
 - Chạy job định kỳ theo cấu hình:
   - Timezone / report_timezone: `due.notification.report_timezone` (default `Asia/Ho_Chi_Minh`)
-  - Times: `due.notification.report_times` (default `["08:00", "17:00"]`)
+  - Times: `due.notification.report_times` — danh sách giờ `HH:MM` (mặc định `["08:00", "17:00"]`; có thể thêm bớt, ví dụ 3 lần/ngày)
 - Mỗi lần chạy:
   - Query Jira lấy các issue theo `duedate`
   - Tách 2 nhóm:
@@ -40,23 +40,23 @@
 - Không filter theo `status` (bao gồm cả Done/Closed nếu Jira vẫn còn `duedate`).
 
 ## 3. Dữ liệu hiển thị trong report
-- Với mỗi assignee:
-  - Danh sách issue: `issue key + summary + (optional) due date`
-- Tổng kết:
-  - tổng sắp đến hạn
-  - tổng quá hạn
+- Với mỗi assignee (có mapping Telegram trong `users.json`):
+  - Danh sách issue: issue key (link HTML tới Jira nếu có `base_url`) + summary + `(due: YYYY-MM-DD)`.
+- Tổng kết (block đầu tiên):
+  - `Tổng sắp đến hạn: X`
+  - `Tổng quá hạn: Y`
 
-## 4. Template message báo cáo (thiết kế)
-Khuyến nghị dùng 2 block tách rõ (tránh quá dài):
-- Block 1: tổng quan
-  - “Tổng sắp đến hạn: X”
-  - “Tổng quá hạn: Y”
-- Block 2: chi tiết theo assignee
-  - `Assignee: <telegram_account_id | Unassigned>`
-  - `Quá hạn:`
-    - `- <a href="{jiraBaseUrl}/browse/<ISSUEKEY>"><ISSUEKEY></a>: <summary> (due: <YYYY-MM-DD>)`
-  - `Sắp đến hạn:`
-    - `- <a href="{jiraBaseUrl}/browse/<ISSUEKEY>"><ISSUEKEY></a>: <summary> (due: <YYYY-MM-DD>)`
+## 4. Template message báo cáo (khớp `Reporter.build_report_messages`)
+Tin gửi Telegram dùng **`parse_mode="HTML"`**.
+- Block 1: hai dòng tổng (như trên).
+- Block 2 (một message / assignee hoặc nhóm `Unassigned`):
+  - **`Assignee:`** — với assignee đã map:
+    - Đọc bản ghi user qua `UsersStore.get_user_record_by_telegram_id`.
+    - Hiển thị **`@` + `user_name`** (bỏ `@` trùng nếu có trong file); nếu `user_name` rỗng thì **`@` + `telegram_display_name`**; nếu vẫn rỗng thì **`telegram_id`** số (không thêm `@`).
+    - Chuỗi sau `Assignee: ` được **`html.escape`** trước khi gửi.
+  - `Unassigned`: `Assignee: Unassigned` (plain).
+  - `Quá hạn:` / `Sắp đến hạn:` — mỗi dòng issue:
+    - `- <a href=".../browse/KEY">KEY</a>: <escaped summary> (due: YYYY-MM-DD)`
 
 > Trong Block 2: giữa phần `Quá hạn` và phần `Sắp đến hạn` có **1 dòng trống**; giữa các dòng issue (bên trong cùng một phần) **không** dùng dòng trống.
 
@@ -72,10 +72,10 @@ Khuyến nghị dùng 2 block tách rõ (tránh quá dài):
 
 ## 4.2. Thứ tự sắp xếp
 - Trong mỗi assignee/group (`Unassigned` là một nhóm riêng): sắp xếp issue theo `duedate` tăng dần; nếu trùng `duedate` thì theo `issue key` tăng dần.
-- Thứ tự các assignee/group trong các message Block 2: theo `telegram_account_id` tăng dần; `Unassigned` đặt cuối.
+- Thứ tự các assignee trong các message Block 2: theo **`telegram_id` số** tăng dần; `Unassigned` đặt cuối (không sort theo chuỗi hiển thị `@username`).
 
 ## 5. Acceptance criteria
-- Bot chạy được 2 lần/ngày đúng giờ.
+- Bot chạy báo cáo đúng các mốc trong `due.notification.report_times` (timezone `report_timezone`).
 - Report phản ánh đúng `duedate` trong Jira tại thời điểm chạy.
 - Không report assignee không có mapping telegram (trừ nhóm `Unassigned`).
 - Nếu Jira API lỗi:

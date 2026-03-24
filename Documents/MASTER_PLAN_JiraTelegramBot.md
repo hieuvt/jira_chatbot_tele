@@ -9,7 +9,7 @@
   - Due date dùng field chuẩn `duedate`.
   - Checklist tạo thành Sub-tasks (mỗi item 1 sub-task con).
   - File upload từ Telegram (nếu có) sẽ được gắn vào Jira issue dưới dạng attachment.
-- Định kỳ (2 lần/ngày, cấu hình theo `Asia/Ho_Chi_Minh`) bot gửi báo cáo:
+- Định kỳ (theo `due.notification.report_times`, timezone `report_timezone`, mặc định 2 lần/ngày `Asia/Ho_Chi_Minh`) bot gửi báo cáo:
   - Tổng số task sắp đến hạn, tổng số task đã quá hạn.
   - Chi tiết từng assignee (assignee là các thành viên có mapping trong Telegram group).
 
@@ -50,18 +50,20 @@ Các policy dưới đây được coi là mặc định (giữ nhất quán xuy
 - Reporter định kỳ:
   - Chỉ report những `assignee` có mapping Telegram tồn tại trong `users.json` (tương ứng các thành viên trong Telegram group).
 
-## 5. Kiến trúc tổng thể (đề xuất)
+## 5. Kiến trúc tổng thể (khớp triển khai hiện tại)
 ```mermaid
 flowchart TD
-  TG[Telegram Bot (python-telegram-bot)] -->|Message| Router[Intent Router + Conversation State Machine]
+  TG[Telegram Bot python-telegram-bot] -->|Message| Router[Intent Router + State Machine]
   Router -->|Read/Write| UsersDB[users.json]
-  Router -->|REST calls| JiraClient[Jira Cloud Client]
-  JiraClient -->|Issue CRUD + Attachments + Subtasks| Jira[Jira Cloud API]
-  Scheduler[Scheduler 2x/day (Asia/Ho_Chi_Minh)] --> Reporter[Reporter]
-  Reporter -->|Query issues by duedate| Jira
-  Reporter -->|Group by assignee| Router
-  Router -->|Send message| TG
+  Router -->|REST| JiraClient[Jira Cloud Client]
+  JiraClient --> Jira[Jira Cloud API]
+  Scheduler[APScheduler report_times] --> Reporter[Reporter]
+  Reporter -->|Query by duedate| JiraClient
+  Reporter -->|Read mapping| UsersDB
+  Reporter -->|send_message HTML| TG
 ```
+- Hội thoại tạo task: `Router` + `UsersStore` + `JiraClient`.
+- Báo cáo định kỳ: `Reporter` gọi Jira, đọc `users.json`, gửi tin trực tiếp qua Telegram Bot API (không đi qua state machine).
 
 ## 6. Phạm vi triển khai theo phase
 1. Phase 0: Chuẩn hóa cấu hình + chuẩn dữ liệu + chốt template câu trả lời.
@@ -69,7 +71,7 @@ flowchart TD
 3. Phase 2: Jira Client (permission check, tạo issue, tạo subtasks, upload attachments).
 4. Phase 3: Telegram Bot + state machine cho 2 use case.
 5. Phase 4: Users store (read/write `users.json`, upsert mapping khi thiếu).
-6. Phase 5: Scheduler & Reporter (2 lần/ngày, report sắp đến hạn/quá hạn).
+6. Phase 5: Scheduler & Reporter (theo `report_times`, report sắp đến hạn/quá hạn).
 7. Phase 6: Testing & hardening (parser, templates, mock Jira).
 8. Phase 7: Deploy & vận hành (secrets/config/volume/logging).
 
@@ -82,7 +84,7 @@ flowchart TD
   - Checklist tạo thành sub-tasks.
   - Attachment (nếu có) được upload lên issue.
 - Báo cáo định kỳ:
-  - Gửi đủ 2 lần/ngày.
+  - Gửi đúng theo `due.notification.report_times` (mặc định 2 lần/ngày).
   - Tổng đúng theo Jira `duedate` theo quy ước: “sắp đến hạn” bao gồm hôm nay (today) trong `window_days`.
   - Chi tiết phân theo assignee có mapping telegram.
 - Không dùng LLM cho intent; toàn bộ flow dùng logic nội bộ + validators.

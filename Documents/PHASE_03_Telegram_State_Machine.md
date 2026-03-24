@@ -44,15 +44,15 @@
   - Nếu không match intent: message đi theo state hiện tại.
 
 ### 3.2. Rule parse intent
-- `giao việc`:
-  - match các câu bắt đầu bằng `giao việc` (ví dụ: `giao việc`, `giao việc cho A`)
-- `việc của tôi`:
-  - match các câu bắt đầu bằng `việc của tôi`
+- Intent resolve bằng **`resolve_intent`** (`src/conversation/intents.py`): so khớp **toàn bộ** chuỗi tin nhắn (sau trim + lower) với một trong các **alias** trong `config/templates.json` → `user_inputs.intent_aliases`.
+- Mặc định hiện tại:
+  - `ASSIGN_TASK` ← `/giaoviec`
+  - `MY_TASK` ← `/vieccuatoi`
+- Có thể thêm alias (kể cả `giao việc`, `việc của tôi`) bằng cách sửa `templates.json`; không dùng rule “bắt đầu bằng…” trừ khi alias được cấu hình tương ứng.
 - Còn lại: `UNKNOWN`
 
 ### 3.3. Rule với `UNKNOWN`
-- Bot trả đúng template cố định:
-  - `Mình chưa hiểu yêu cầu. Bạn hãy nhập đúng 1 trong 2 lệnh: "giao việc" hoặc "việc của tôi".`
+- Bot trả template `TPL_UNKNOWN_INTENT` từ `config/templates.json` (mặc định nhắc `/giaoviec` hoặc `/vieccuatoi`).
 - Không tạo conversation buffer mới khi `UNKNOWN`.
 
 ## 4. State machine chi tiết
@@ -83,16 +83,15 @@
 - Nếu true -> sang `S4_ASK_ASSIGNEE`.
 
 5) `S4_ASK_ASSIGNEE`
-- Prompt: `Chọn người được giao việc: reply tin nhắn của họ hoặc @mention họ. Nếu không, bạn có thể nhập trực tiếp jira_account_id.`
+- Prompt (khi bot hỏi chọn assignee): `Chọn người được giao việc: reply tin nhắn của họ hoặc @mention họ. Nếu không, bạn có thể nhập trực tiếp jira_account_id.`
 - Input hợp lệ (một trong):
-  - reply một message của user cần giao việc -> lấy `replied_user_id`
-  - message có @mention user -> lấy `mentioned_user_id`
-  - nhập trực tiếp `jira_account_id` (chuỗi không rỗng)
+  - **Reply** tin của user cần giao → có `reply_to_user_id` (Telegram id chắc chắn).
+  - **@username** trong text → Bot API thường gửi entity `mention` (chỉ có text `@username`), **`mentioned_user_id` có thể `None`**; handlers vẫn parse được `mentioned_username` / tên từ entity.
+  - Nhập trực tiếp `jira_account_id` (chuỗi không rỗng).
 - Rule:
-  - Nếu nhận `replied_user_id` hoặc `mentioned_user_id`:
-    - lookup `users.json` theo `telegram_user_id` để lấy `assignee_jira_account_id`
-    - nếu không có mapping -> hỏi `jira_account_id` của assignee (dùng `TPL_ASK_ASSIGNEE`) và upsert vào `UsersStore`
-  - Nếu nhập trực tiếp `jira_account_id`: set `assignee_jira_account_id`
+  - Nếu có `reply_to_user_id` hoặc `mentioned_user_id`: lookup `users.json` theo `telegram_id`; thiếu Jira → `TPL_ASK_ASSIGNEE` rồi upsert.
+  - Chỉ có @username không kèm id: vẫn có thể hiển thị `@username` trên confirm; map Jira khi đã có trong `users.json` hoặc sau khi user nhập `jira_account_id`.
+  - Nhập trực tiếp `jira_account_id`: set assignee (hiển thị theo Jira, không qua Telegram mention).
 - Sang `S5_CHECK_ASSIGNEE_MEMBER`.
 
 6) `S5_CHECK_ASSIGNEE_MEMBER`
@@ -124,7 +123,7 @@
   - nếu user nhập text khác `KHONG/XONG` và không có file -> nhắc lại prompt
 - Giới hạn:
   - max files theo `config.telegram.attachments.max_files` (mặc định 10)
-  - max size từng file theo `config.jira.attachments.max_size_mb` (nếu cấu hình)
+  - max size từng file theo `config.jira.attachment_max_bytes` (mặc định 10MB)
   - tổng dung lượng attachments trong RAM cho 1 phiên: tối đa 20MB
   - nếu vượt 20MB: từ chối file mới và nhắc user gửi file nhỏ hơn hoặc bỏ bớt file
   - khi phiên kết thúc (`HUY`, timeout, restart intent, tạo Jira thành công hoặc thất bại): xóa ngay toàn bộ dữ liệu file trong RAM
@@ -215,7 +214,7 @@ Quy ước tên file cho media không có filename:
 
 ## 7. Template prompts chuẩn hóa (áp dụng cố định)
 - `TPL_UNKNOWN_INTENT`:
-  - `Mình chưa hiểu yêu cầu. Bạn hãy nhập đúng 1 trong 2 lệnh: "giao việc" hoặc "việc của tôi".`
+  - Khớp `config/templates.json` (mặc định nhắc `/giaoviec` hoặc `/vieccuatoi`).
 - `TPL_ASK_SENDER_JIRA_ID`:
   - `Bạn chưa liên kết Jira. Vui lòng nhập jira_account_id của bạn.`
 - `TPL_NOT_PROJECT_MEMBER`:

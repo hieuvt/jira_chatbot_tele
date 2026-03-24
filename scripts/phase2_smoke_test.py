@@ -1,7 +1,10 @@
 """Phase 2 smoke test for JiraClient.
 
-Usage:
-  python scripts/phase2_smoke_test.py --assignee-account-id <jiraAccountId> --reporter-account-id <jiraAccountId>
+Usage (from repo root):
+  python scripts/phase2_smoke_test.py --assignee-account-id <jiraAccountId>
+
+Optional --reporter-account-id is accepted for backward compatibility but ignored:
+Jira search follows Phase 5 contract (no reporter filter in JQL).
 """
 
 from __future__ import annotations
@@ -34,7 +37,11 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run Phase 2 JiraClient smoke tests.")
     parser.add_argument("--config", default="config/config.json", help="Path to runtime config JSON.")
     parser.add_argument("--assignee-account-id", required=True, help="Jira accountId used for issue assignee.")
-    parser.add_argument("--reporter-account-id", required=True, help="Jira accountId used for due-date query.")
+    parser.add_argument(
+        "--reporter-account-id",
+        default="",
+        help="Deprecated/ignored: due-date search is not filtered by reporter (see Phase 5).",
+    )
     parser.add_argument("--skip-upload", action="store_true", help="Skip attachment upload step.")
     return parser.parse_args()
 
@@ -49,6 +56,7 @@ def print_error(step: str, exc: JiraClientError) -> None:
 
 def main() -> int:
     args = parse_args()
+    _ = args.reporter_account_id  # optional CLI flag; Jira query does not filter by reporter
     config = load_runtime_config(args.config)
     jira = get_jira_settings(config)
     client = build_jira_client(config)
@@ -127,7 +135,7 @@ def main() -> int:
     try:
         q = QueryIssuesRequest(
             project_key=str(jira["project_key"]),
-            reporter_account_id=args.reporter_account_id,
+            reporter_account_id="",
             window_days=int(config.get("due", {}).get("notification", {}).get("window_days", 3)),
             now=now,
             max_results=int(jira.get("search", {}).get("max_results", 50)),

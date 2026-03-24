@@ -29,8 +29,11 @@ def load_runtime_config(config_path: str = "config/config.json") -> dict[str, An
 
 @dataclass
 class FakeJiraClient:
+    """Mirrors JiraClient surface used by ConversationStateMachine (incl. optional base_url for success text)."""
+
     member_ids: set[str]
     admin_ids: set[str]
+    base_url: str = ""
     fail_on_create: JiraClientError | None = None
     fail_on_subtask: JiraClientError | None = None
     fail_on_upload: JiraClientError | None = None

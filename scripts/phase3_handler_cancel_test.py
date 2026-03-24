@@ -17,6 +17,7 @@ if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
 from src.bot.handlers import deliver_conversation_output
+from src.conversation.templates import load_template_bundle
 
 
 def _check(condition: bool, label: str) -> int:
@@ -29,7 +30,8 @@ def _check(condition: bool, label: str) -> int:
 
 async def _run() -> int:
     failures = 0
-    tpl = "Đã hủy giao việc."
+    bundle = load_template_bundle(ROOT_DIR / "config" / "templates.json")
+    tpl = bundle.bot_replies.get("TPL_CANCELLED", "Đã hủy giao việc.")
 
     bot = MagicMock()
     bot.send_message = AsyncMock()

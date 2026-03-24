@@ -4,36 +4,40 @@
 - Tạo bộ khung Python để các phase sau plug-in logic nghiệp vụ một cách sạch.
 - Chuẩn hóa cách tổ chức modules, dependency, và cách chạy bot + scheduler.
 
-## 2. Đề xuất cấu trúc thư mục
+## 2. Cấu trúc thư mục (khớp repo hiện tại)
 ```text
+config/
+  config.json                   # cấu hình chạy thật (không commit secret)
+  config.example.json
+  templates.json                # bot_replies + intent_aliases
+data/
+  users.json                    # mapping (thường mount volume)
 src/
   bot/
-    entrypoint.py                # khởi chạy Telegram bot
-    handlers.py                  # đăng ký handlers theo intent/state
+    entrypoint.py                # bootstrap: config, Jira, state machine, Reporter, scheduler, polling
+    handlers.py                  # đăng ký handlers, build MessageInput
   scheduler/
-    jobs.py                      # stub job runner 2 lần/ngày (bootstrap trong entrypoint ở phase sau)
+    jobs.py                      # APScheduler: cron theo report_times
   conversation/
-    intents.py                   # mapping text -> intent enum
-    state_machine.py            # definitions cho state transitions
-    validators.py               # parse/validate Summary/Description/DueDays/Checklist
-    templates.py                # toàn bộ text template cố định
+    intents.py                   # alias -> Intent enum
+    state_machine.py             # luồng hội thoại
+    validators.py
+    templates.py                 # load templates.json
   jira/
-    client.py                    # Jira REST client abstraction
-    models.py                    # DTO: IssueCreateRequest, SubtaskCreateRequest,...
-    permissions.py              # membership/admin checks interface
+    client.py
+    models.py
+    permissions.py
   reports/
-    reporter.py                 # query + group + render message report
+    reporter.py                  # Phase 5: build_report + build_report_messages + send_report
   storage/
-    users_store.py             # đọc/ghi users.json + atomic write contract
+    users_store.py
   config/
-    schema.md                   # mô tả config fields (không code)
+    schema.md                    # mô tả field config
   common/
-    logging.py                 # logging setup contract
-    errors.py                  # error taxonomy để bot reply đúng template
-data/
-  users.json                    # mapping gốc (thường mounted từ volume)
-config/
-  config.example.json
+    logging.py
+    errors.py
+scripts/                        # phase smoke tests (phase2–5, …)
+Documents/                      # plan theo phase
 ```
 
 ## 3. Contracts module (định nghĩa mức interface)
@@ -64,11 +68,11 @@ config/
   - `upsert_mapping(telegram_account_id, jira_account_id, *, user_name=..., telegram_display_name=...) -> bool(added)`
   - atomic write/lock được định nghĩa để phase sau implement.
 
-### 3.5. Reporter
-- Hàm hợp đồng:
-  - `get_due_tasks(window_days, now) -> issues grouped by assignee`
-  - `render_report(issues) -> message_text`
-  - `send_report(telegram chat id, message_text)`
+### 3.5. Reporter (Phase 5 — đã nối vào entrypoint)
+- `build_report(window_days, now) -> ReportModel` — query Jira, nhóm assignee, lọc theo `users.json`, tách quá hạn / sắp đến hạn.
+- `build_report_messages(window_days, now) -> list[str]` — block tổng + một message / assignee; HTML (link Jira, dòng Assignee).
+- `send_report(telegram_chat_id, message_texts)` — gửi tuần tự qua Bot API (`parse_mode="HTML"`).
+- Các hàm `get_due_tasks` / `render_report` legacy trong file reporter có thể giữ stub; luồng chính dùng các API trên.
 
 ## 4. Non-functional requirements
 - Logging có correlation id theo conversation (telegram chat id + sender id + timestamp).
@@ -79,11 +83,11 @@ config/
   - `ValidationError` -> nhắc người dùng nhập đúng format (ví dụ DueDays phải là số).
 
 ## 5. Acceptance criteria
-- Bot có thể start và nhận message (chưa cần tạo Jira issue).
-- Intent router trả về đúng intent enum.
-- Templates được tải từ file JSON ngoài và lookup đúng.
-- Scheduler được bootstrapped bằng `APScheduler` để chạy 2 lần/ngày (stub, chưa query Jira).
-- Có stub Jira client và stub reporter để phase sau replace logic.
+- Bot có thể start và nhận message.
+- Intent router trả về đúng intent enum theo alias trong `templates.json`.
+- Templates được tải từ `config/templates.json` và lookup đúng.
+- Scheduler `APScheduler` được start trong `entrypoint` theo `due.notification.report_times` (Phase 5 gắn job gọi Jira + Reporter thật).
+- `JiraClient` / `Reporter` là implementation đầy đủ ở phase sau; skeleton ban đầu đã được thay bằng logic thật khi hoàn tất Phase 2–5.
 
 ## 6. Lựa chọn & khuyến nghị mặc định (Phase 1)
 Các quyết định sau được coi là mặc định cho Phase 1:
@@ -93,6 +97,6 @@ Các quyết định sau được coi là mặc định cho Phase 1:
 - Huỷ flow: user gõ `Hủy` -> reset state ngay (không hỏi xác nhận).
 - Conversation buffer schema (in-memory) tối thiểu gồm các field theo flow: `summary`, `description`, `checklist_items`, `due_days`, `attachments`.
 - Scheduler: dùng **`APScheduler`** để cấu hình job 2 lần/ngày (stub). Scheduler được start ngay khi bot boot và dùng timezone `Asia/Ho_Chi_Minh`.
-- Templates: load từ file JSON ngoài `config/templates.json` theo schema **fixed keys theo step/state** (load 1 lần lúc boot). Ví dụ keys: `unknown_intent`, `giao_viec.ask_summary`, `giao_viec.ask_due_days`, `viec_cua_toi.ask_description`.
+- Templates: load từ `config/templates.json` — `bot_replies` (keys `TPL_*`) và `user_inputs.intent_aliases` (map tới `ASSIGN_TASK` / `MY_TASK`). Intent mặc định: `/giaoviec`, `/vieccuatoi`.
 - File upload (Phase 1): chỉ lưu `file_meta` tối thiểu để phase sau upload lên Jira, gồm `filename`, `size_bytes`, `telegram_file_id`. Phase 1 chưa enforce limit/quotas.
 
