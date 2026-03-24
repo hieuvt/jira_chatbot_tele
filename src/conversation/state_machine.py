@@ -2,6 +2,14 @@
 
 from __future__ import annotations
 
+import sys
+from pathlib import Path
+
+# Running this file directly puts `.../src/conversation` on sys.path, not the repo root — `src.*` imports need the latter.
+_project_root = Path(__file__).resolve().parents[2]
+if str(_project_root) not in sys.path:
+    sys.path.insert(0, str(_project_root))
+
 import mimetypes
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
@@ -300,32 +308,12 @@ class ConversationStateMachine:
             buffer.state = ConversationState.S5_CHECK_ASSIGNEE_MEMBER
             return self._run_non_interactive_states(buffer=buffer, key=key)
 
-        if message.reply_to_user_id:
-            mapped = self._users_store.get_jira_account_id(str(message.reply_to_user_id))
-            if mapped:
-                buffer.assignee_jira_account_id = mapped
-                # If user typed/mentioned the assignee (e.g. "@anhtt0220") in the same message,
-                # prefer it for display over the ForceReply target (bot prompt).
-                buffer.assignee_telegram_display = (
-                    _to_telegram_display(username=message.mentioned_username, user_id=message.mentioned_user_id)
-                    or _to_telegram_display(username=message.reply_to_username, user_id=message.reply_to_user_id)
-                )
-                buffer.state = ConversationState.S5_CHECK_ASSIGNEE_MEMBER
-                return self._run_non_interactive_states(buffer=buffer, key=key)
-            buffer.pending_assignee_telegram_user_id = message.reply_to_user_id
-            buffer.pending_assignee_telegram_display = _to_telegram_display(
-                username=message.mentioned_user_name,
-                user_id=message.reply_to_user_id,
-            )
-            buffer.pending_assignee_user_name = message.mentioned_user_name or str(message.reply_to_user_id)
-            buffer.pending_assignee_telegram_display_name = message.mentioned_telegram_display_name or message.mentioned_user_name or ""
-            return self._tpl("TPL_ASK_ASSIGNEE")
         if message.mentioned_user_id:
             mapped = self._users_store.get_jira_account_id(str(message.mentioned_user_id))
             if mapped:
                 buffer.assignee_jira_account_id = mapped
                 buffer.assignee_telegram_display = _to_telegram_display(
-                    username=message.mentioned_username,
+                    username=message.mentioned_user_name,
                     user_id=message.mentioned_user_id,
                 )
                 buffer.state = ConversationState.S5_CHECK_ASSIGNEE_MEMBER
@@ -337,6 +325,25 @@ class ConversationStateMachine:
             )
             buffer.pending_assignee_user_name = message.mentioned_user_name or str(message.mentioned_user_id)
             buffer.pending_assignee_telegram_display_name = message.mentioned_telegram_display_name or ""
+            return self._tpl("TPL_ASK_ASSIGNEE")
+        if message.mentioned_user_name:
+            mapped = self._users_store.get_jira_account_id(str(message.mentioned_user_name))
+            if mapped:
+                buffer.assignee_jira_account_id = mapped
+                # If user typed/mentioned the assignee (e.g. "@anhtt0220") in the same message,
+                # prefer it for display over the ForceReply target (bot prompt).
+                buffer.assignee_telegram_display = (
+                    _to_telegram_display(username=message.mentioned_username, user_id=message.mentioned_user_id or message.reply_to_user_id) #thêm để tránh null 
+                )
+                buffer.state = ConversationState.S5_CHECK_ASSIGNEE_MEMBER
+                return self._run_non_interactive_states(buffer=buffer, key=key)
+            buffer.pending_assignee_telegram_user_id = message.mentioned_user_id or message.reply_to_user_id
+            buffer.pending_assignee_telegram_display = _to_telegram_display(
+                username=message.mentioned_user_name,
+                user_id=message.mentioned_user_id or message.reply_to_user_id,
+            )
+            buffer.pending_assignee_user_name = message.mentioned_user_name or ""
+            buffer.pending_assignee_telegram_display_name = message.mentioned_telegram_display_name or message.mentioned_user_name or ""
             return self._tpl("TPL_ASK_ASSIGNEE")
         if message.has_media or not message.text or not message.text.strip():
             return (
