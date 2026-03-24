@@ -72,15 +72,15 @@ def main() -> int:
             json.dumps(
                 [
                     {
-                        "user_name": "",
+                        "user_name": "fallback_two",
                         "telegram_id": "2",
-                        "telegram_display_name": "",
+                        "telegram_display_name": "User Two",
                         "jira_id": "jira-2",
                     },
                     {
-                        "user_name": "",
+                        "user_name": "fallback_ten",
                         "telegram_id": "10",
-                        "telegram_display_name": "",
+                        "telegram_display_name": "User Ten",
                         "jira_id": "jira-1",
                     },
                 ]
@@ -174,14 +174,14 @@ def main() -> int:
         # Included assignees only: telegram id 2, telegram id 10, Unassigned => 3 block2 messages + block1
         failures += _check(len(messages) == 4, "Total messages count (block1 + 3 assignees)")
 
-        # Assignee order: telegram "2" first, "10" second, Unassigned last
-        failures += _check(messages[1].startswith("Assignee: 2\n"), "Assignee order: telegram 2 first")
-        failures += _check(messages[2].startswith("Assignee: 10\n"), "Assignee order: telegram 10 second")
+        # Assignee order: telegram "2" first, "10" second, Unassigned last (@ from user_name)
+        failures += _check(messages[1].startswith("Assignee: @fallback_two\n"), "Assignee order: telegram 2 first")
+        failures += _check(messages[2].startswith("Assignee: @fallback_ten\n"), "Assignee order: telegram 10 second")
         failures += _check(messages[3].startswith("Assignee: Unassigned\n"), "Assignee order: Unassigned last")
 
         # Assignee '2': only upcoming => no "Quá hạn:" heading
         lines_2 = messages[1].splitlines()
-        failures += _check(lines_2[0] == "Assignee: 2", "Assignee '2' first line")
+        failures += _check(lines_2[0] == "Assignee: @fallback_two", "Assignee '2' first line (@ user_name)")
         failures += _check("Quá hạn:" not in lines_2, "Assignee '2' should not include Quá hạn section")
         failures += _check(lines_2[1] == "Sắp đến hạn:", "Assignee '2' should have Sắp đến hạn heading")
         failures += _check(
@@ -197,7 +197,7 @@ def main() -> int:
         # 2 - OM-100: Overdue A (due: 2026-03-19)
         # 3 (blank)
         # 4 Sắp đến hạn:
-        failures += _check(lines_10[0] == "Assignee: 10", "Assignee '10' first line")
+        failures += _check(lines_10[0] == "Assignee: @fallback_ten", "Assignee '10' first line (@ user_name)")
         failures += _check(lines_10[1] == "Quá hạn:", "Assignee '10' has Quá hạn heading")
         failures += _check(lines_10[2] == "- OM-100: Overdue A (due: 2026-03-19)", "Assignee '10' overdue issue")
         failures += _check(lines_10[3] == "", "Assignee '10' has exactly 1 blank line between sections")

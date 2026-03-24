@@ -21,6 +21,29 @@ from src.jira.models import JiraIssueRecord, QueryIssuesRequest
 from src.storage.users_store import UsersStore
 
 
+def _format_report_assignee_mention(*, telegram_id: str, record: dict[str, str] | None) -> str:
+    """
+    Plain text after 'Assignee: ' for HTML messages (escape at render time).
+    Prefer @user_name (Telegram @username), then @telegram_display_name, else numeric telegram_id without @.
+    """
+    dn = ""
+    un = ""
+    if record:
+        dn = str(record.get("telegram_display_name", "")).strip()
+        un = str(record.get("user_name", "")).strip()
+    if un:
+        body = un.lstrip("@").strip()
+        return f"@{body}" if body else telegram_id
+    if dn:
+        body = dn.lstrip("@").strip()
+        return f"@{body}" if body else telegram_id
+    tid = str(telegram_id).strip()
+    if tid.isdigit():
+        return tid
+    body = tid.lstrip("@").strip()
+    return f"@{body}" if body else tid
+
+
 @dataclass(frozen=True)
 class ReportIssue:
     issue_key: str
@@ -30,7 +53,8 @@ class ReportIssue:
 
 @dataclass
 class AssigneeReport:
-    label: str  # telegram_account_id or "Unassigned"
+    telegram_id: str | None  # None for Unassigned
+    assignee_mention_text: str  # shown after 'Assignee: ' (includes leading @ when applicable)
     overdue: list[ReportIssue]
     upcoming: list[ReportIssue]
 
@@ -109,9 +133,11 @@ class Reporter:
                 telegram_id = reverse_map.get(str(assignee_jira_id).strip())
                 if not telegram_id:
                     continue
-                label = telegram_id
+                rec = self.users_store.get_user_record_by_telegram_id(telegram_id)
+                mention_text = _format_report_assignee_mention(telegram_id=telegram_id, record=rec)
             else:
-                label = "Unassigned"
+                telegram_id = None
+                mention_text = "Unassigned"
 
             # Sort issues in each part: due_date asc, then issue_key asc
             overdue_items.sort(key=lambda x: (x.due_date, x.issue_key))
@@ -119,16 +145,21 @@ class Reporter:
 
             if overdue_items or upcoming_items:
                 assignee_reports.append(
-                    AssigneeReport(label=label, overdue=overdue_items, upcoming=upcoming_items)
+                    AssigneeReport(
+                        telegram_id=telegram_id,
+                        assignee_mention_text=mention_text,
+                        overdue=overdue_items,
+                        upcoming=upcoming_items,
+                    )
                 )
 
         # Sort assignees: telegram_account_id asc, Unassigned last
         def _assignee_sort_key(a: AssigneeReport) -> tuple[int, int, int]:
-            if a.label == "Unassigned":
+            if a.telegram_id is None:
                 return (1, 0, 0)
             try:
                 # Telegram IDs are numeric most of the time; use int ordering.
-                return (0, 0, int(a.label))
+                return (0, 0, int(a.telegram_id))
             except Exception:
                 # Non-numeric label: keep them after numeric IDs.
                 return (0, 1, 0)
@@ -158,7 +189,8 @@ class Reporter:
         jira_base_url = jira_base_url.rstrip("/")
 
         for assignee in model.assignees:
-            lines: list[str] = [f"Assignee: {assignee.label}"]
+            escaped_assignee = html_lib.escape(assignee.assignee_mention_text)
+            lines: list[str] = [f"Assignee: {escaped_assignee}"]
 
             if assignee.overdue:
                 lines.append("Quá hạn:")

@@ -68,6 +68,29 @@ class UsersStore:
                     reverse[jira_id] = telegram_id
         return reverse
 
+    def get_user_record_by_telegram_id(self, telegram_account_id: str) -> dict[str, str] | None:
+        """
+        Full user row from users.json for reporter / lookups.
+        Keys: user_name, telegram_id, telegram_display_name, jira_id (empty strings if missing).
+        """
+        if telegram_account_id is None or not str(telegram_account_id).strip():
+            return None
+        key = str(telegram_account_id).strip()
+        records = self._read_file(create_if_missing=True)
+        for rec in records:
+            if str(rec.get("telegram_id", "")).strip() != key:
+                continue
+            un_raw = rec.get("user_name")
+            dn_raw = rec.get("telegram_display_name")
+            jira_raw = rec.get("jira_id")
+            return {
+                "user_name": str(un_raw).strip() if isinstance(un_raw, str) else "",
+                "telegram_id": key,
+                "telegram_display_name": str(dn_raw).strip() if isinstance(dn_raw, str) else "",
+                "jira_id": jira_raw.strip() if isinstance(jira_raw, str) else "",
+            }
+        return None
+
     def upsert_mapping(
         self,
         telegram_account_id: str,
