@@ -1,11 +1,14 @@
-"""Phase 3 Telegram state machine and in-memory sessions."""
+"""
+Máy trạng thái hội thoại Telegram (Phase 3): /giaoviec, /vieccuatoi, buffer theo (chat_id, user_id),
+gọi JiraClient + UsersStore, trả về text từ templates.json.
+"""
 
 from __future__ import annotations
 
 import sys
 from pathlib import Path
 
-# Running this file directly puts `.../src/conversation` on sys.path, not the repo root — `src.*` imports need the latter.
+# Chạy trực tiếp file này chỉ thêm `src/conversation` vào sys.path — cần thêm root repo để import `src.*`
 _project_root = Path(__file__).resolve().parents[2]
 if str(_project_root) not in sys.path:
     sys.path.insert(0, str(_project_root))
@@ -28,6 +31,9 @@ from src.conversation.validators import (
 from src.jira.models import AttachmentMeta, IssueCreateRequest, SubtaskCreateRequest
 
 
+# --- Các trạng thái FSM (bước hỏi / kiểm tra Jira) ---
+
+
 class ConversationState(str, Enum):
     S0_START_ASSIGN = "S0_START_ASSIGN"
     S0_START_MY_TASK = "S0_START_MY_TASK"
@@ -47,6 +53,7 @@ class ConversationState(str, Enum):
 
 @dataclass
 class FileMeta:
+    """Metadata file tải từ Telegram (kèm bytes) trước khi upload Jira."""
     filename: str
     size: int
     telegram_file_id: str
@@ -58,6 +65,7 @@ class FileMeta:
 
 @dataclass
 class MessageInput:
+    """Một tin vào state machine: text, reply/mention, media."""
     chat_id: int
     user_id: int
     text: str | None = None
@@ -80,6 +88,7 @@ class MessageInput:
 
 @dataclass
 class ConversationBuffer:
+    """Trạng thái phiên làm việc của một user trong một chat."""
     intent: Intent
     chat_id: int
     user_id: int
@@ -110,6 +119,7 @@ class ConversationBuffer:
 
 @dataclass
 class StateMachineConfig:
+    """Tham số cố định từ config: project, loại issue, giới hạn file."""
     project_key: str
     issue_type_id: str
     subtask_issue_type_id: str
@@ -120,6 +130,8 @@ class StateMachineConfig:
 
 
 class ConversationStateMachine:
+    """Điều phối intent, session timeout, và từng bước nhập liệu tới khi tạo issue Jira."""
+
     def __init__(
         self,
         *,
@@ -137,6 +149,7 @@ class ConversationStateMachine:
         self._sessions: dict[tuple[int, int], ConversationBuffer] = {}
 
     def handle_message(self, message: MessageInput) -> str:
+        """Điểm vào chính: hủy, intent mới, tiếp tục phiên hoặc unknown."""
         key = (message.chat_id, message.user_id)
         existing = self._sessions.get(key)
         if existing and self._is_expired(existing):
@@ -161,6 +174,7 @@ class ConversationStateMachine:
         return self._start_new_session(message=message, intent=route.intent)
 
     def _start_new_session(self, *, message: MessageInput, intent: Intent) -> str:
+        """Tạo buffer mới và chạy các bước không cần input tới khi phải hỏi user."""
         if intent == Intent.ASSIGN_TASK:
             buffer = ConversationBuffer(
                 intent=intent,
@@ -180,6 +194,7 @@ class ConversationStateMachine:
         return self._run_non_interactive_states(buffer=buffer, key=key)
 
     def _handle_existing(self, *, buffer: ConversationBuffer, message: MessageInput, key: tuple[int, int]) -> str:
+        """Phân nhánh theo `buffer.state` cho tin trong phiên đang mở."""
         if buffer.state == ConversationState.S1_ASK_SENDER_JIRA_ID:
             return self._on_sender_id(buffer=buffer, message=message, key=key)
         if buffer.state == ConversationState.S4_ASK_ASSIGNEE:
@@ -199,6 +214,7 @@ class ConversationStateMachine:
         return self._tpl("TPL_UNKNOWN_INTENT")
 
     def _run_non_interactive_states(self, *, buffer: ConversationBuffer, key: tuple[int, int]) -> str:
+        """Vòng lặp: kiểm tra mapping, member Jira, admin (giao việc), assignee — tới bước cần hỏi hoặc tạo issue."""
         while True:
             if buffer.state in {ConversationState.S0_START_ASSIGN, ConversationState.S0_START_MY_TASK}:
                 sender = self._users_store.get_jira_account_id(str(buffer.user_id))
@@ -266,7 +282,10 @@ class ConversationStateMachine:
 
             return self._tpl("TPL_UNKNOWN_INTENT")
 
+    # --- Xử lý từng bước nhập liệu ---
+
     def _on_sender_id(self, *, buffer: ConversationBuffer, message: MessageInput, key: tuple[int, int]) -> str:
+        """User gửi jira_account_id khi chưa có mapping; upsert rồi kiểm tra member."""
         if message.has_media or not message.text or not message.text.strip():
             return self._tpl("TPL_ASK_SENDER_JIRA_ID")
         jira_account_id = message.text.strip()
@@ -281,6 +300,7 @@ class ConversationStateMachine:
         return self._run_non_interactive_states(buffer=buffer, key=key)
 
     def _on_assignee(self, *, buffer: ConversationBuffer, message: MessageInput, key: tuple[int, int]) -> str:
+        """Chọn người được giao: reply, @mention, hoặc nhập jira_account_id; có thể hỏi thêm jira id."""
         def _to_telegram_display(*, username: str | None, user_id: int | None) -> str:
             if isinstance(username, str) and username.strip():
                 normalized = username.strip().lstrip("@")
@@ -308,6 +328,26 @@ class ConversationStateMachine:
             buffer.state = ConversationState.S5_CHECK_ASSIGNEE_MEMBER
             return self._run_non_interactive_states(buffer=buffer, key=key)
 
+        # Reply tin nhắn của assignee (ForceReply trong nhóm)
+        if message.reply_to_user_id:
+            mapped = self._users_store.get_jira_account_id(str(message.reply_to_user_id))
+            if mapped:
+                buffer.assignee_jira_account_id = mapped
+                buffer.assignee_telegram_display = (
+                    _to_telegram_display(username=message.mentioned_username, user_id=message.mentioned_user_id)
+                    or _to_telegram_display(username=message.reply_to_username, user_id=message.reply_to_user_id)
+                )
+                buffer.state = ConversationState.S5_CHECK_ASSIGNEE_MEMBER
+                return self._run_non_interactive_states(buffer=buffer, key=key)
+            buffer.pending_assignee_telegram_user_id = message.reply_to_user_id
+            buffer.pending_assignee_telegram_display = _to_telegram_display(
+                username=message.mentioned_user_name,
+                user_id=message.reply_to_user_id,
+            )
+            buffer.pending_assignee_user_name = message.mentioned_user_name or str(message.reply_to_user_id)
+            buffer.pending_assignee_telegram_display_name = message.mentioned_telegram_display_name or message.mentioned_user_name or ""
+            return self._tpl("TPL_ASK_ASSIGNEE")
+
         if message.mentioned_user_id:
             mapped = self._users_store.get_jira_account_id(str(message.mentioned_user_id))
             if mapped:
@@ -330,10 +370,10 @@ class ConversationStateMachine:
             mapped = self._users_store.get_jira_account_id(str(message.mentioned_user_name))
             if mapped:
                 buffer.assignee_jira_account_id = mapped
-                # If user typed/mentioned the assignee (e.g. "@anhtt0220") in the same message,
-                # prefer it for display over the ForceReply target (bot prompt).
-                buffer.assignee_telegram_display = (
-                    _to_telegram_display(username=message.mentioned_username, user_id=message.mentioned_user_id or message.reply_to_user_id) #thêm để tránh null 
+                # Ưu tiên @username/id từ tin nhắn so với target ForceReply (tin bot)
+                buffer.assignee_telegram_display = _to_telegram_display(
+                    username=message.mentioned_username,
+                    user_id=message.mentioned_user_id or message.reply_to_user_id,
                 )
                 buffer.state = ConversationState.S5_CHECK_ASSIGNEE_MEMBER
                 return self._run_non_interactive_states(buffer=buffer, key=key)
@@ -373,6 +413,7 @@ class ConversationStateMachine:
         return self._run_non_interactive_states(buffer=buffer, key=key)
 
     def _on_summary(self, *, buffer: ConversationBuffer, message: MessageInput) -> str:
+        """Nhập tiêu đề issue (cắt 255 ký tự)."""
         if message.has_media or not message.text or not message.text.strip():
             return self._tpl("TPL_ASK_SUMMARY")
         summary = message.text.strip()
@@ -383,6 +424,7 @@ class ConversationStateMachine:
         return self._tpl("TPL_ASK_DESCRIPTION")
 
     def _on_description(self, *, buffer: ConversationBuffer, message: MessageInput) -> str:
+        """Nhập mô tả (description) issue."""
         if message.has_media or not message.text or not message.text.strip():
             return self._tpl("TPL_ASK_DESCRIPTION")
         buffer.description = message.text.strip()
@@ -390,6 +432,7 @@ class ConversationStateMachine:
         return self._tpl("TPL_ASK_ATTACHMENTS")
 
     def _on_attachments(self, *, buffer: ConversationBuffer, message: MessageInput) -> str:
+        """Upload file hoặc Không / Xong; kiểm tra số file và dung lượng."""
         if message.has_media:
             if len(buffer.attachments) + len(message.attachments) > self._config.attachment_max_files:
                 return "Đã vượt quá số lượng file cho phép. Vui lòng giảm số file gửi."
@@ -416,6 +459,7 @@ class ConversationStateMachine:
         return self._tpl("TPL_ASK_ATTACHMENTS")
 
     def _on_checklist(self, *, buffer: ConversationBuffer, message: MessageInput) -> str:
+        """Nhập checklist theo dòng; tối đa 20 mục."""
         if message.has_media or not message.text:
             return self._tpl("TPL_ASK_CHECKLIST")
         if is_khong(message.text) and not buffer.checklist_items:
@@ -433,6 +477,7 @@ class ConversationStateMachine:
         return self._tpl("TPL_ASK_CHECKLIST")
 
     def _on_due_days(self, *, buffer: ConversationBuffer, message: MessageInput) -> str:
+        """Số ngày hoàn thành (due = now UTC + N ngày khi tạo issue)."""
         if message.has_media or not message.text:
             return self._tpl("TPL_INVALID_DUE_DAYS")
         try:
@@ -443,6 +488,7 @@ class ConversationStateMachine:
         return self._render_confirm(buffer)
 
     def _on_confirm(self, *, buffer: ConversationBuffer, message: MessageInput, key: tuple[int, int]) -> str:
+        """Có -> chuyển S12_CREATE; Không -> hủy phiên."""
         if message.has_media or not message.text:
             return self._tpl("TPL_INVALID_CONFIRM")
         if is_co(message.text):
@@ -454,6 +500,7 @@ class ConversationStateMachine:
         return self._tpl("TPL_INVALID_CONFIRM")
 
     def _create_jira_issue(self, *, buffer: ConversationBuffer, key: tuple[int, int]) -> str:
+        """Gọi Jira: issue chính, sub-task checklist, upload file; kết thúc phiên."""
         assert buffer.summary and buffer.description and buffer.assignee_jira_account_id and buffer.due_days
         due_date = (datetime.now(timezone.utc) + timedelta(days=buffer.due_days)).strftime("%Y-%m-%d")
         try:
@@ -505,6 +552,7 @@ class ConversationStateMachine:
             return self._map_jira_error(exc)
 
     def _render_confirm(self, buffer: ConversationBuffer) -> str:
+        """Ghép bản tóm tắt + template xác nhận."""
         description = (buffer.description or "").strip()
         if len(description) > 500:
             description = f"{description[:500]}..."
@@ -522,6 +570,7 @@ class ConversationStateMachine:
         return f"{info}{self._tpl('TPL_CONFIRM_CREATE')}"
 
     def _map_jira_error(self, error: JiraClientError) -> str:
+        """Ánh xạ mã lỗi JiraClient sang câu tiếng Việt cho user."""
         if error.code == "JIRA_PERMISSION_DENIED":
             return (
                 "Bot chưa đủ quyền kiểm tra project trên Jira (Browse/Admin project). "
@@ -542,18 +591,22 @@ class ConversationStateMachine:
         return "Đã có lỗi khi tạo công việc trên Jira. Vui lòng thử lại sau."
 
     def _end_session(self, key: tuple[int, int]) -> None:
+        """Xóa session và giải phóng bytes file đính kèm trong buffer."""
         existing = self._sessions.pop(key, None)
         if existing:
             existing.clear_attachments()
 
     def _is_expired(self, buffer: ConversationBuffer) -> bool:
+        """Quá `timeout_minutes` kể từ lần cập nhật cuối."""
         return datetime.now(timezone.utc) - buffer.updated_at > timedelta(minutes=self._config.timeout_minutes)
 
     def _tpl(self, key: str) -> str:
+        """Lấy câu trả lời theo key TPL_*; thiếu key thì trả về chính key."""
         return self._templates.get(key, key)
 
 
 def build_filename(kind: str, mime_type: str | None, timestamp: int) -> str:
+    """Tên file fallback khi Telegram không gửi file_name (theo loại media + mime)."""
     ext = ".bin"
     if mime_type:
         guessed = mimetypes.guess_extension(mime_type)

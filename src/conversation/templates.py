@@ -1,4 +1,4 @@
-"""Load fixed response templates from external JSON file."""
+"""Đọc `templates.json`: câu trả lời bot (`TPL_*`) và alias intent."""
 
 from __future__ import annotations
 
@@ -9,10 +9,13 @@ from pathlib import Path
 
 @dataclass(frozen=True)
 class TemplateBundle:
+    """Gói template đã parse: bot_replies + intent_aliases (string keys cho state machine)."""
+
     bot_replies: dict[str, str]
     intent_aliases: dict[str, list[str]] = field(default_factory=dict)
 
 
+# Fallback khi file JSON không có user_inputs (schema phẳng cũ)
 DEFAULT_INTENT_ALIASES: dict[str, list[str]] = {
     "ASSIGN_TASK": ["giao việc", "/giao việc", "/giaoviec", "@bot giao việc"],
     "MY_TASK": ["việc của tôi", "/việc của tôi", "@bot việc của tôi"],
@@ -20,6 +23,7 @@ DEFAULT_INTENT_ALIASES: dict[str, list[str]] = {
 
 
 def load_template_bundle(path: Path) -> TemplateBundle:
+    """Load JSON; hỗ trợ schema mới (bot_replies + user_inputs) hoặc phẳng chỉ TPL_*."""
     if not path.exists():
         raise FileNotFoundError(f"Template file not found: {path}")
     with path.open("r", encoding="utf-8") as file:
@@ -27,7 +31,7 @@ def load_template_bundle(path: Path) -> TemplateBundle:
     if not isinstance(data, dict):
         raise ValueError("templates.json must be an object.")
 
-    # Backward-compatible flat schema: {"TPL_*": "..."}
+    # Tương thích file cũ: toàn key TPL_* ở root
     if "bot_replies" not in data and any(str(k).startswith("TPL_") for k in data.keys()):
         bot_replies = {str(k): str(v) for k, v in data.items()}
         return TemplateBundle(bot_replies=bot_replies, intent_aliases=DEFAULT_INTENT_ALIASES.copy())
@@ -61,5 +65,5 @@ def load_template_bundle(path: Path) -> TemplateBundle:
 
 
 def load_templates(path: Path) -> dict[str, str]:
+    """Chỉ lấy map TPL -> chuỗi (tiện cho code cũ)."""
     return load_template_bundle(path).bot_replies
-

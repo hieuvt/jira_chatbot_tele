@@ -1,4 +1,4 @@
-"""Phase 4: UsersStore concurrency + lock timeout tests.
+"""Test đồng thời UsersStore và timeout lock.
 
 Usage:
   python scripts/phase4_users_store_concurrency_test.py

@@ -1,19 +1,12 @@
 """
-Phase 5 reporter render tests (no network).
+Test render báo cáo Reporter (không mạng): quá hạn/sắp đến hạn, sort, HTML/plain.
 
-Validates:
-- Overdue vs Upcoming boundaries (today / today+N inclusive, overdue < today)
-- Filter assignees via users.json mapping (telegram_account_id -> jira_account_id)
-- Unassigned group rendering even without mapping
-- Sort order:
-  - assignees: by telegram_account_id asc, Unassigned last
-  - issues: within each part by due_date asc then issue_key asc
-- Template formatting rules:
-  - Block 1 has exactly 2 lines (totals only)
-  - Block 2:
-    - only show section heading if that section has issues
-    - exactly 1 blank line between "Quá hạn:" and "Sắp đến hạn:" when both exist
-    - no blank lines between issue lines
+Kiểm tra:
+- Ranh giới quá hạn (< today) và sắp đến hạn ([today, today+N])
+- Lọc assignee theo mapping users.json
+- Nhóm Unassigned vẫn render dù không có mapping
+- Thứ tự: assignee theo telegram_id tăng, Unassigned cuối; issue theo due rồi key
+- Định dạng: block 1 hai dòng tổng; block 2 heading chỉ khi có issue; một dòng trống giữa hai mục khi cả hai có dữ liệu
 """
 
 from __future__ import annotations

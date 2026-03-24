@@ -1,4 +1,4 @@
-"""Phase 2 negative tests for known validation paths.
+"""Test âm tính Jira client: due date sai định dạng, vượt giới hạn sub-task.
 
 Usage:
   python scripts/phase2_negative_test.py --assignee-account-id <jiraAccountId>

@@ -1,4 +1,4 @@
-"""Phase 2 smoke test for JiraClient.
+"""Smoke test tích hợp Jira thật (membership, admin, tạo issue/sub-task, upload, query due).
 
 Usage (from repo root):
   python scripts/phase2_smoke_test.py --assignee-account-id <jiraAccountId>

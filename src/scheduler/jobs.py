@@ -1,4 +1,4 @@
-"""Scheduler bootstrap for periodic reports (skeleton)."""
+"""Khởi tạo scheduler báo cáo định kỳ: APScheduler nếu có, không thì stub chạy vòng lặp theo giờ."""
 
 from __future__ import annotations
 
@@ -15,6 +15,7 @@ except Exception:  # pragma: no cover - optional dependency in Phase 1
 
 @dataclass
 class SchedulerStub:
+    """Stub khi không cài APScheduler: thread nền tính next run theo HH:MM mỗi ngày."""
     timezone: str
     started: bool = False
     _jobs: dict[str, tuple[int, int, Callable[[], None]]] = field(default_factory=dict)
@@ -45,15 +46,14 @@ class SchedulerStub:
         self._jobs[job_id] = (hour, minute, func)
 
     def _run_loop(self) -> None:
-        # Lightweight daily scheduler used when APScheduler is unavailable.
+        # Scheduler nhẹ khi không có APScheduler
         from datetime import datetime, timedelta, timezone
         from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
         try:
             tz = ZoneInfo(self.timezone)
         except ZoneInfoNotFoundError:
-            # Fallback for environments without tzdata package.
-            # Asia/Ho_Chi_Minh is fixed offset UTC+07 without DST.
+            # Thiếu tzdata: HCM cố định UTC+7; còn lại dùng UTC
             if str(self.timezone).lower() == "asia/ho_chi_minh":
                 tz = timezone(timedelta(hours=7))
             else:
@@ -86,8 +86,7 @@ class SchedulerStub:
             try:
                 next_func()
             except Exception:
-                # Fail-safe: don't kill scheduling loop.
-                # Actual logging is handled by the job callback itself.
+                # Không để job làm chết vòng lặp; log do callback tự xử lý
                 pass
 
     def shutdown(self) -> None:
@@ -95,10 +94,7 @@ class SchedulerStub:
 
 
 def build_scheduler(timezone: str) -> object:
-    """Build scheduler object.
-
-    Use APScheduler when available; fallback to stub otherwise.
-    """
+    """Tạo BackgroundScheduler hoặc SchedulerStub tùy có APScheduler hay không."""
     if BackgroundScheduler is None:
         return SchedulerStub(timezone=timezone)
     scheduler = BackgroundScheduler(timezone=timezone)
@@ -106,6 +102,7 @@ def build_scheduler(timezone: str) -> object:
 
 
 def _parse_hhmm(value: str) -> tuple[int, int]:
+    """Parse chuỗi HH:MM trong config report_times."""
     raw = str(value).strip()
     if not raw or ":" not in raw:
         raise ValueError(f"Invalid time format: {value!r}, expected HH:MM")
@@ -125,20 +122,17 @@ def configure_phase5_report_jobs(
     job_callback: Callable[[], None],
 ) -> None:
     """
-    Schedule Phase 5 report jobs using APScheduler cron trigger.
-
-    Contract:
-    - Run 2x/day (or N times) per `report_times` list.
-    - Use `timezone` for cron calculation.
+    Đăng ký job cron Phase 5 (N lần/ngày theo `report_times`, timezone từ config).
+    Stub scheduler không có add_job thì bỏ qua.
     """
     add_job = getattr(scheduler, "add_job", None)
     if not callable(add_job):
-        # APScheduler dependency missing -> scheduler is a stub; no jobs can be scheduled.
+        # Không có APScheduler — stub không schedule được
         return
 
     for t in report_times:
         hour, minute = _parse_hhmm(t)
-        # Stable-ish job id so multiple calls won't create duplicates in development.
+        # id ổn định để dev gọi lại không nhân đôi job
         job_id = f"phase5_report_{hour:02d}{minute:02d}"
 
         add_job(

@@ -1,4 +1,4 @@
-"""Application entrypoint for Phase 3 Telegram state machine."""
+"""Điểm vào ứng dụng: nạp config, Jira, state machine, reporter, scheduler, chạy long polling Telegram."""
 
 from __future__ import annotations
 
@@ -12,6 +12,7 @@ from zoneinfo import ZoneInfo
 
 from telegram.ext import Application
 
+# Đảm bảo import `src.*` khi chạy file này trực tiếp
 project_root = Path(__file__).resolve().parents[2]
 if str(project_root) not in sys.path:
     sys.path.insert(0, str(project_root))
@@ -28,6 +29,7 @@ from src.storage.users_store import UsersStore
 
 
 def _load_config(config_path: Path) -> dict[str, Any]:
+    """Đọc JSON runtime config; bắt buộc là object ở root."""
     with config_path.open("r", encoding="utf-8") as file:
         payload = json.load(file)
     if not isinstance(payload, dict):
@@ -36,8 +38,9 @@ def _load_config(config_path: Path) -> dict[str, Any]:
 
 
 def bootstrap_app() -> dict[str, Any]:
+    """Dựng toàn bộ dependency và trả về logger, Application Telegram, scheduler."""
     logger = get_logger("bot.entrypoint")
-    # Resolve paths from repo root so users.json/config are stable regardless of CWD.
+    # Luôn resolve từ root repo để config/users.json không phụ thuộc CWD khi chạy
     config_path = project_root / "config" / "config.json"
     templates_path = project_root / "config" / "templates.json"
     users_path = project_root / "data" / "users.json"
@@ -115,6 +118,7 @@ def bootstrap_app() -> dict[str, Any]:
             telegram_chat_id_first = None
 
     def _phase5_job_callback() -> None:
+        """Job định kỳ: build báo cáo due date và gửi chat đầu tiên trong allowed_chat_ids."""
         trace_id = uuid.uuid4().hex[:12]
         if telegram_chat_id_first is None:
             logger.error("Phase5: allowed_chat_ids missing/invalid. trace_id=%s", trace_id)
@@ -123,7 +127,7 @@ def bootstrap_app() -> dict[str, Any]:
         try:
             tz = ZoneInfo(report_timezone)
         except Exception:
-            # Fallback for environments without tzdata (e.g. missing "Asia/Ho_Chi_Minh").
+            # Môi trường thiếu tzdata (Windows): fallback offset cho HCM hoặc UTC
             if str(report_timezone).lower() == "asia/ho_chi_minh":
                 tz = timezone(timedelta(hours=7))
             else:
@@ -165,6 +169,7 @@ def bootstrap_app() -> dict[str, Any]:
 
 
 def main() -> None:
+    """Chạy bot: bootstrap + run_polling."""
     app = bootstrap_app()
     app["logger"].info("Phase 3 state machine initialized. Start polling...")
     app["application"].run_polling()

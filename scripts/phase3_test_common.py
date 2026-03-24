@@ -1,4 +1,4 @@
-"""Shared helpers for Phase 3 state-machine tests."""
+"""Hàm dùng chung cho test state machine (Phase 3): FakeJiraClient, FakeUsersStore, build_state_machine."""
 
 from __future__ import annotations
 
@@ -29,7 +29,7 @@ def load_runtime_config(config_path: str = "config/config.json") -> dict[str, An
 
 @dataclass
 class FakeJiraClient:
-    """Mirrors JiraClient surface used by ConversationStateMachine (incl. optional base_url for success text)."""
+    """Giả lập JiraClient cho test: membership/admin, create/upload, có thể base_url để message thành công có link."""
 
     member_ids: set[str]
     admin_ids: set[str]
@@ -80,6 +80,8 @@ class FakeJiraClient:
 
 
 class FakeUsersStore:
+    """Bộ nhớ in-memory giả UsersStore (map telegram_id -> jira_id)."""
+
     def __init__(self, seed: dict[str, str] | None = None) -> None:
         self._data = seed.copy() if seed else {}
 
@@ -115,6 +117,7 @@ def build_state_machine(
     admin_ids: set[str] | None = None,
     jira_overrides: dict[str, JiraClientError | None] | None = None,
 ) -> tuple[ConversationStateMachine, FakeJiraClient, FakeUsersStore]:
+    """Dựng state machine + fake Jira + fake store từ config/templates thật."""
     runtime = load_runtime_config(config_path)
     jira = runtime.get("jira", {})
     if not isinstance(jira, dict):
@@ -152,14 +155,17 @@ def build_state_machine(
 
 
 def make_text(chat_id: int, user_id: int, text: str) -> MessageInput:
+    """Tin chỉ có text."""
     return MessageInput(chat_id=chat_id, user_id=user_id, text=text)
 
 
 def make_reply(chat_id: int, user_id: int, reply_to_user_id: int, text: str = "") -> MessageInput:
+    """Tin reply (giao việc chọn assignee)."""
     return MessageInput(chat_id=chat_id, user_id=user_id, text=text, reply_to_user_id=reply_to_user_id)
 
 
 def make_attachment(chat_id: int, user_id: int, filename: str, size: int, content: bytes) -> MessageInput:
+    """Tin có một file đính kèm giả."""
     payload = FileMeta(
         filename=filename,
         size=size,

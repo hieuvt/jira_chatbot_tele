@@ -1,4 +1,4 @@
-"""Jira REST client implementation for Phase 2."""
+"""Client Jira Cloud REST (urllib): member/admin, tạo issue/sub-task, upload file, search JQL báo cáo."""
 
 from __future__ import annotations
 
@@ -21,6 +21,8 @@ from src.jira.models import (
 
 
 class JiraClient:
+    """Gọi API Jira bằng Basic auth (email + API token service account)."""
+
     def __init__(
         self,
         base_url: str,
@@ -40,6 +42,8 @@ class JiraClient:
         auth_raw = f"{email}:{api_token}".encode("utf-8")
         self._auth_header = f"Basic {base64.b64encode(auth_raw).decode('ascii')}"
 
+    # --- Quyền & vai trò project ---
+
     def check_project_membership(self, jira_account_id: str, project_key: str) -> bool:
         self._ensure_bot_has_project_permission(project_key=project_key, permission_key="BROWSE_PROJECTS")
         role_members = self._get_project_role_members(project_key=project_key)
@@ -53,6 +57,8 @@ class JiraClient:
             if jira_account_id in actors:
                 return True
         return False
+
+    # --- Tạo issue / sub-task / đính kèm ---
 
     def create_issue(self, request_data: IssueCreateRequest) -> str:
         payload = {
@@ -162,6 +168,8 @@ class JiraClient:
             )
         return uploaded
 
+    # --- Search & báo cáo due date ---
+
     def query_issues_by_due_date_for_reporter(
         self, query: QueryIssuesRequest
     ) -> dict[str, list[JiraIssueRecord]]:
@@ -195,6 +203,8 @@ class JiraClient:
             if start_at >= total or not issues:
                 break
         return grouped
+
+    # --- Nội bộ: quyền bot, role actors, HTTP, lỗi, ADF, multipart ---
 
     def _ensure_bot_has_project_permission(self, project_key: str, permission_key: str) -> None:
         response = self._request_json(

@@ -1,4 +1,4 @@
-"""Telegram handlers for Phase 3 state-machine integration."""
+"""Đăng ký handler Telegram: chuyển Update -> MessageInput, gọi state machine, gửi phản hồi (ForceReply khi cần)."""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ from src.conversation.state_machine import FileMeta, MessageInput, build_filenam
 
 
 def _telegram_user_name_for_store(user: User) -> str:
-    """Identifier-first label for users.json `user_name` (username, else name, else id)."""
+    """Nhãn lưu `user_name` trong users.json: ưu tiên @username, rồi họ tên, cuối cùng là id."""
     username = getattr(user, "username", None)
     if isinstance(username, str) and username.strip():
         return username.strip().lstrip("@")
@@ -30,7 +30,7 @@ def _telegram_user_name_for_store(user: User) -> str:
 
 
 def _telegram_display_name_only(user: User) -> str:
-    """Profile display name: first + last; empty if unset (per Phase 4 contract)."""
+    """Họ tên hiển thị Telegram (first + last); rỗng nếu không có (contract Phase 4)."""
     parts: list[str] = []
     fn = getattr(user, "first_name", None)
     ln = getattr(user, "last_name", None)
@@ -42,6 +42,7 @@ def _telegram_display_name_only(user: User) -> str:
 
 
 def _extract_mention_user(message: Message) -> User | None:
+    """Lấy User từ entity text_mention / mention có kèm object user."""
     for entity in message.entities or []:
         if entity.type == "text_mention" and entity.user:
             return entity.user
@@ -52,9 +53,8 @@ def _extract_mention_user(message: Message) -> User | None:
 
 def _needs_user_reply(output: str) -> bool:
     """
-    In group/supergroup, Bot Privacy Mode prevents normal text messages from reaching the bot.
-    We only need ForceReply when the bot is asking for the user to type the next input
-    (e.g., jira_account_id, assignee, summary, description, etc.).
+    Trong group/supergroup, Privacy Mode có thể chặn tin thường — chỉ bật ForceReply khi
+    bot đang hỏi input tự do (jira id, assignee, summary, mô tả, …).
     """
     if not output:
         return False
@@ -86,11 +86,9 @@ async def deliver_conversation_output(
     force_reply_tracker: dict[tuple[int, int], int],
 ) -> None:
     """
-    Send state-machine text to the chat. For TPL_CANCELLED, clear ForceReply on the last bot
-    prompt (edit_message_reply_markup) when possible, then send_message without threading.
-
-    In groups, prompts that need free-form input use ForceReply; we store that message_id per
-    (chat_id, user_id) so cancel can drop the markup and help clients exit the reply bar.
+    Gửi nội dung state machine ra chat.
+    - Hủy (TPL_CANCELLED): gỡ reply_markup tin nhắn prompt trước (nếu có), rồi send_message.
+    - Prompt cần gõ chữ trong nhóm: reply_text + ForceReply, lưu message_id để /huy gỡ markup.
     """
     key = (chat_id, user_id)
 
@@ -119,6 +117,7 @@ async def deliver_conversation_output(
 
 
 async def _download_to_file_meta(message: Message, kind: str, context: ContextTypes.DEFAULT_TYPE) -> FileMeta | None:
+    """Tải một loại media (document, photo, …) về bytes và gói thành FileMeta cho state machine."""
     tg_file = None
     mime_type: str | None = None
     filename: str | None = None
@@ -172,22 +171,22 @@ async def _download_to_file_meta(message: Message, kind: str, context: ContextTy
 
 
 def _extract_mentioned_user_id(message: Message) -> int | None:
+    """Lấy telegram user id từ mention / text_mention (nếu client gắn user)."""
     entities = message.entities or []
     for entity in entities:
         if entity.type == "text_mention" and entity.user:
             return entity.user.id
         if entity.type == "mention" and entity.user:
-            # Some clients may populate `user` for `mention`; handle best-effort.
+            # Một số client gắn `user` cho mention — xử lý best-effort
             return entity.user.id
     return None
 
 
 def _extract_mentioned_user_username(message: Message) -> str | None:
     """
-    Extract Telegram username from mention entities, if available.
-
-    - `text_mention`: may include full user object (username may be missing).
-    - `mention`: often only provides the textual @username (no user object).
+    Trích username từ entity mention / text_mention.
+    - text_mention: có thể có user nhưng thiếu username.
+    - mention: thường chỉ có chuỗi @username trong text.
     """
     entities = message.entities or []
     text = message.text or message.caption or ""
@@ -197,7 +196,7 @@ def _extract_mentioned_user_username(message: Message) -> str | None:
             if isinstance(username, str) and username.strip():
                 return username.strip()
         if entity.type == "mention":
-            # Best-effort: parse "@username" from message text using entity offsets.
+            # Parse @username từ text theo offset/length của entity
             offset = int(getattr(entity, "offset", 0))
             length = int(getattr(entity, "length", 0))
             if length <= 0 or offset < 0 or offset + length > len(text):
@@ -214,6 +213,7 @@ def register_handlers(
     *,
     tpl_cancelled: str,
 ) -> None:
+    """Đăng ký MessageHandler toàn bộ tin nhắn; build MessageInput và gọi state_machine.handle_message."""
     force_reply_tracker: dict[tuple[int, int], int] = {}
 
     async def on_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

@@ -1,4 +1,4 @@
-"""Phase 3 smoke tests for Telegram conversation state machine.
+"""Smoke test state machine (không mạng): luồng /vieccuatoi và /giaoviec.
 
 Usage:
   python scripts/phase3_smoke_test.py

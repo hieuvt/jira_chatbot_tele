@@ -1,4 +1,4 @@
-"""Verify cancel clears ForceReply markup and uses standalone send_message.
+"""Kiểm tra handler: hủy dùng send_message, gỡ ForceReply, prompt dùng reply_text.
 
 Usage:
   python scripts/phase3_handler_cancel_test.py

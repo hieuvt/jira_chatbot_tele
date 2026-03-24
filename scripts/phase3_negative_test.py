@@ -1,4 +1,4 @@
-"""Phase 3 negative tests for Telegram conversation state machine.
+"""Test âm tính state machine: intent lạ, due days, file, /huy, timeout, lỗi Jira.
 
 Usage:
   python scripts/phase3_negative_test.py

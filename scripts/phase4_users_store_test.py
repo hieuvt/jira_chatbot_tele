@@ -1,4 +1,4 @@
-"""Phase 4: UsersStore unit-style tests (no network).
+"""Test UsersStore: get/upsert, JSON lỗi, ghi atomic (không mạng).
 
 Usage:
   python scripts/phase4_users_store_test.py

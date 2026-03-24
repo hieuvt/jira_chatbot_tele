@@ -1,4 +1,4 @@
-"""Run Phase 3 state-machine scenarios from JSON file.
+"""Chạy kịch bản state machine từ file JSON (bước + assert).
 
 Usage:
   python scripts/phase3_scenario_runner.py --scenario-file scripts/phase3_scenarios.example.json

@@ -1,4 +1,4 @@
-"""Intent router for Phase 3 conversation flow."""
+"""Phân loại intent từ tin nhắn text (lệnh /giaoviec, /vieccuatoi, …)."""
 
 from __future__ import annotations
 
@@ -7,6 +7,8 @@ from enum import Enum
 
 
 class Intent(str, Enum):
+    """Các intent hội thoại được hỗ trợ."""
+
     ASSIGN_TASK = "ASSIGN_TASK"
     MY_TASK = "MY_TASK"
     UNKNOWN = "UNKNOWN"
@@ -14,10 +16,13 @@ class Intent(str, Enum):
 
 @dataclass(frozen=True)
 class IntentResult:
+    """Kết quả router: intent + payload mở rộng (hiện dùng dict rỗng)."""
+
     intent: Intent
     payload: dict[str, str]
 
 
+# Alias mặc định khi không có `templates.json`; có thể bị ghi đè bởi cấu hình JSON
 DEFAULT_INTENT_ALIASES: dict[Intent, list[str]] = {
     Intent.ASSIGN_TASK: ["/giaoviec"],
     Intent.MY_TASK: ["/vieccuatoi"],
@@ -25,10 +30,12 @@ DEFAULT_INTENT_ALIASES: dict[Intent, list[str]] = {
 
 
 def _normalize_for_intent(message_text: str) -> str:
+    """Chuẩn hoá text: trim + lower để so khớp alias."""
     return message_text.strip().lower()
 
 
 def _normalize_alias_map(intent_aliases: dict[str, list[str]] | None) -> dict[Intent, list[str]]:
+    """Merge alias từ JSON với DEFAULT; key intent là tên enum string (ASSIGN_TASK, …)."""
     merged = {key: value[:] for key, value in DEFAULT_INTENT_ALIASES.items()}
     if not intent_aliases:
         return merged
@@ -48,6 +55,7 @@ def _normalize_alias_map(intent_aliases: dict[str, list[str]] | None) -> dict[In
 
 
 def resolve_intent(message_text: str, *, intent_aliases: dict[str, list[str]] | None = None) -> IntentResult:
+    """So khớp chuỗi đã chuẩn hoá với từng alias; khớp đúng (equality) mới nhận intent."""
     normalized = _normalize_for_intent(message_text)
     aliases_map = _normalize_alias_map(intent_aliases)
     for intent, aliases in aliases_map.items():
@@ -55,4 +63,3 @@ def resolve_intent(message_text: str, *, intent_aliases: dict[str, list[str]] | 
             if normalized == alias:
                 return IntentResult(intent=intent, payload={})
     return IntentResult(intent=Intent.UNKNOWN, payload={})
-

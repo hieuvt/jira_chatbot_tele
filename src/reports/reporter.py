@@ -1,11 +1,4 @@
-"""Phase 5: Scheduler & Reporter implementation.
-
-Build periodic due-date report:
-- Overdue: due_date < today
-- Upcoming: today <= due_date <= today+N (inclusive)
-
-Then group by assignee and filter by mapping in users.json (telegram <-> jira).
-"""
+"""Báo cáo định kỳ (Phase 5): phân loại quá hạn / sắp đến hạn, nhóm assignee, lọc theo users.json, render HTML Telegram."""
 
 from __future__ import annotations
 
@@ -23,8 +16,8 @@ from src.storage.users_store import UsersStore
 
 def _format_report_assignee_mention(*, telegram_id: str, record: dict[str, str] | None) -> str:
     """
-    Plain text after 'Assignee: ' for HTML messages (escape at render time).
-    Prefer @user_name (Telegram @username), then @telegram_display_name, else numeric telegram_id without @.
+    Chuỗi hiển thị sau 'Assignee: ' (sẽ html.escape khi gửi).
+    Ưu tiên @user_name, rồi @telegram_display_name, rồi số telegram_id (không @).
     """
     dn = ""
     un = ""
@@ -46,6 +39,7 @@ def _format_report_assignee_mention(*, telegram_id: str, record: dict[str, str] 
 
 @dataclass(frozen=True)
 class ReportIssue:
+    """Một dòng issue trong báo cáo (đã có due_date kiểu date)."""
     issue_key: str
     summary: str
     due_date: date
@@ -53,14 +47,18 @@ class ReportIssue:
 
 @dataclass
 class AssigneeReport:
-    telegram_id: str | None  # None for Unassigned
-    assignee_mention_text: str  # shown after 'Assignee: ' (includes leading @ when applicable)
+    """Một assignee (hoặc Unassigned): hai danh sách overdue / upcoming."""
+
+    telegram_id: str | None  # None = nhóm Unassigned
+    assignee_mention_text: str  # Chuỗi sau 'Assignee: ' (có thể có @)
     overdue: list[ReportIssue]
     upcoming: list[ReportIssue]
 
 
 @dataclass
 class ReportModel:
+    """Mô hình báo cáo đầy đủ trước khi format chuỗi gửi Telegram."""
+
     today: date
     window_days: int
     total_upcoming: int
@@ -69,6 +67,8 @@ class ReportModel:
 
 
 class Reporter:
+    """Gọi Jira client + đọc UsersStore, build tin nhắn HTML và gửi qua Bot API."""
+
     def __init__(
         self,
         *,
@@ -86,17 +86,18 @@ class Reporter:
 
     def build_report(self, *, window_days: int, now: datetime) -> ReportModel:
         """
-        Build report model that matches Documents/PHASE_05_Scheduler_And_Reporter.md contract.
+        Dựng ReportModel theo contract Phase 5: quá hạn < today; sắp đến hạn trong [today, today+N].
+        Assignee không có mapping Telegram bị bỏ (trừ Unassigned).
         """
         if now.tzinfo is None:
             raise ValueError("now must be timezone-aware datetime")
 
         today = now.date()
-        reverse_map = self.users_store.get_reverse_mapping()  # jira_account_id -> telegram_account_id
+        reverse_map = self.users_store.get_reverse_mapping()  # jira_id -> telegram_id
 
         query = QueryIssuesRequest(
             project_key=self.project_key,
-            reporter_account_id="",  # Phase 5 contract: no reporter filter
+            reporter_account_id="",  # Không lọc reporter trong JQL
             window_days=window_days,
             now=now,
         )
@@ -122,13 +123,11 @@ class Reporter:
                 if due < today:
                     overdue_items.append(issue)
                 else:
-                    # Upcoming window is inclusive: today..today+N
+                    # Sắp đến hạn: khoảng đóng [today, today+N]
                     if due <= (today + timedelta(days=window_days)):
                         upcoming_items.append(issue)
 
-            # Filter mapping Telegram:
-            # - Unassigned group is always rendered
-            # - Other assignees are rendered only if they have reverse mapping (jira_account_id -> telegram_account_id)
+            # Lọc theo mapping Telegram: Unassigned luôn hiện; assignee khác cần có trong reverse_map
             if not is_unassigned:
                 telegram_id = reverse_map.get(str(assignee_jira_id).strip())
                 if not telegram_id:
@@ -139,7 +138,7 @@ class Reporter:
                 telegram_id = None
                 mention_text = "Unassigned"
 
-            # Sort issues in each part: due_date asc, then issue_key asc
+            # Sắp issue: due_date tăng, rồi issue_key
             overdue_items.sort(key=lambda x: (x.due_date, x.issue_key))
             upcoming_items.sort(key=lambda x: (x.due_date, x.issue_key))
 
@@ -153,15 +152,15 @@ class Reporter:
                     )
                 )
 
-        # Sort assignees: telegram_account_id asc, Unassigned last
+        # Thứ tự assignee: telegram_id số tăng dần, Unassigned cuối
         def _assignee_sort_key(a: AssigneeReport) -> tuple[int, int, int]:
             if a.telegram_id is None:
                 return (1, 0, 0)
             try:
-                # Telegram IDs are numeric most of the time; use int ordering.
+                # Telegram id thường là số — sort số
                 return (0, 0, int(a.telegram_id))
             except Exception:
-                # Non-numeric label: keep them after numeric IDs.
+                # Không parse int: xếp sau nhóm số
                 return (0, 1, 0)
 
         assignee_reports.sort(key=_assignee_sort_key)
@@ -178,9 +177,10 @@ class Reporter:
         )
 
     def build_report_messages(self, *, window_days: int, now: datetime) -> list[str]:
+        """Chuyển ReportModel thành list tin nhắn (block 1 tổng + mỗi assignee một tin)."""
         model = self.build_report(window_days=window_days, now=now)
 
-        # Block 1: only 2 lines (no header time).
+        # Khối 1: hai dòng tổng
         overall_text = f"Tổng sắp đến hạn: {model.total_upcoming}\nTổng quá hạn: {model.total_overdue}"
 
         messages: list[str] = [overall_text]
@@ -209,7 +209,7 @@ class Reporter:
                         )
 
             if assignee.upcoming:
-                # One empty line between overdue and upcoming headings (only if both exist).
+                # Một dòng trống giữa Quá hạn và Sắp đến hạn khi cả hai đều có
                 if assignee.overdue:
                     lines.append("")
                 lines.append("Sắp đến hạn:")
@@ -232,6 +232,7 @@ class Reporter:
         return messages
 
     async def _send_messages_async(self, *, telegram_chat_id: int, message_texts: list[str]) -> None:
+        """Gửi tuần tự từng tin với parse_mode HTML."""
         for idx, text in enumerate(message_texts):
             try:
                 await self._bot.send_message(chat_id=telegram_chat_id, text=text, parse_mode="HTML")
@@ -240,15 +241,12 @@ class Reporter:
 
     def send_report(self, *, telegram_chat_id: int, message_texts: list[str] | str) -> None:
         """
-        Send report messages sequentially.
-
-        Note: this method is sync (used by APScheduler job thread),
-        so it runs an event loop internally.
+        API đồng bộ cho job scheduler: bọc asyncio.run để gọi Bot API async.
         """
         texts: list[str] = [message_texts] if isinstance(message_texts, str) else message_texts
         asyncio.run(self._send_messages_async(telegram_chat_id=telegram_chat_id, message_texts=texts))
 
-    # Backward-compatible methods (not used yet by scheduler wiring).
+    # Giữ chỗ tương thích cũ (chưa dùng)
     def get_due_tasks(self, window_days: int, now: datetime) -> dict[str, list[dict[str, str]]]:
         _ = (window_days, now)
         return {}

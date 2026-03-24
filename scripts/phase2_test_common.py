@@ -1,4 +1,7 @@
-"""Shared helpers for Phase 2 Jira client smoke tests."""
+"""Hàm dùng chung cho script test Jira client (Phase 2).
+
+Nạp config, dựng JiraClient với retry/timeout từ config.jira.http.
+"""
 
 from __future__ import annotations
 
@@ -10,6 +13,7 @@ from src.jira.client import JiraClient
 
 
 def load_runtime_config(config_path: str = "config/config.json") -> dict[str, Any]:
+    """Đọc JSON config; root phải là object."""
     path = Path(config_path)
     with path.open("r", encoding="utf-8") as file:
         config = json.load(file)
@@ -19,6 +23,7 @@ def load_runtime_config(config_path: str = "config/config.json") -> dict[str, An
 
 
 def build_jira_client(config: dict[str, Any]) -> JiraClient:
+    """Tạo JiraClient từ `config['jira']` và nhánh `http` tuỳ chọn."""
     jira = config.get("jira", {})
     if not isinstance(jira, dict):
         raise ValueError("config.jira must be an object")
@@ -35,6 +40,7 @@ def build_jira_client(config: dict[str, Any]) -> JiraClient:
 
 
 def get_jira_settings(config: dict[str, Any]) -> dict[str, Any]:
+    """Trả về object `jira` trong config."""
     jira = config.get("jira", {})
     if not isinstance(jira, dict):
         raise ValueError("config.jira must be an object")

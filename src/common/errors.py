@@ -1,20 +1,20 @@
-"""Custom error taxonomy for bot flows."""
+"""Phân loại exception dùng trong bot (Jira, validate, v.v.)."""
 
 
 class BotError(Exception):
-    """Base exception for bot domain."""
+    """Lớp cơ sở cho lỗi thuộc miền nghiệp vụ bot."""
 
 
 class JiraAuthError(BotError):
-    """Jira authentication or credential issue."""
+    """Lỗi xác thực hoặc credential Jira."""
 
 
 class JiraPermissionError(BotError):
-    """Jira permission issue for member/admin checks."""
+    """Lỗi quyền Jira khi kiểm tra member/admin project."""
 
 
 class JiraClientError(BotError):
-    """Typed Jira client error for template mapping."""
+    """Lỗi từ JiraClient có mã `code` để map sang câu trả lời người dùng."""
 
     def __init__(
         self,
@@ -31,5 +31,4 @@ class JiraClientError(BotError):
 
 
 class ValidationError(BotError):
-    """User input validation issue."""
-
+    """Lỗi validate input từ người dùng."""
