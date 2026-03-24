@@ -328,26 +328,7 @@ class ConversationStateMachine:
             buffer.state = ConversationState.S5_CHECK_ASSIGNEE_MEMBER
             return self._run_non_interactive_states(buffer=buffer, key=key)
 
-        # Reply tin nhắn của assignee (ForceReply trong nhóm)
-        if message.reply_to_user_id:
-            mapped = self._users_store.get_jira_account_id(str(message.reply_to_user_id))
-            if mapped:
-                buffer.assignee_jira_account_id = mapped
-                buffer.assignee_telegram_display = (
-                    _to_telegram_display(username=message.mentioned_username, user_id=message.mentioned_user_id)
-                    or _to_telegram_display(username=message.reply_to_username, user_id=message.reply_to_user_id)
-                )
-                buffer.state = ConversationState.S5_CHECK_ASSIGNEE_MEMBER
-                return self._run_non_interactive_states(buffer=buffer, key=key)
-            buffer.pending_assignee_telegram_user_id = message.reply_to_user_id
-            buffer.pending_assignee_telegram_display = _to_telegram_display(
-                username=message.mentioned_user_name,
-                user_id=message.reply_to_user_id,
-            )
-            buffer.pending_assignee_user_name = message.mentioned_user_name or str(message.reply_to_user_id)
-            buffer.pending_assignee_telegram_display_name = message.mentioned_telegram_display_name or message.mentioned_user_name or ""
-            return self._tpl("TPL_ASK_ASSIGNEE")
-
+        
         if message.mentioned_user_id:
             mapped = self._users_store.get_jira_account_id(str(message.mentioned_user_id))
             if mapped:
@@ -385,6 +366,27 @@ class ConversationStateMachine:
             buffer.pending_assignee_user_name = message.mentioned_user_name or ""
             buffer.pending_assignee_telegram_display_name = message.mentioned_telegram_display_name or message.mentioned_user_name or ""
             return self._tpl("TPL_ASK_ASSIGNEE")
+        
+        # Reply tin nhắn của assignee (ForceReply trong nhóm)
+        if message.reply_to_user_id:
+            mapped = self._users_store.get_jira_account_id(str(message.reply_to_user_id))
+            if mapped:
+                buffer.assignee_jira_account_id = mapped
+                buffer.assignee_telegram_display = (
+                    _to_telegram_display(username=message.mentioned_username, user_id=message.mentioned_user_id)
+                    or _to_telegram_display(username=message.reply_to_username, user_id=message.reply_to_user_id)
+                )
+                buffer.state = ConversationState.S5_CHECK_ASSIGNEE_MEMBER
+                return self._run_non_interactive_states(buffer=buffer, key=key)
+            buffer.pending_assignee_telegram_user_id = message.reply_to_user_id
+            buffer.pending_assignee_telegram_display = _to_telegram_display(
+                username=message.mentioned_user_name,
+                user_id=message.reply_to_user_id,
+            )
+            buffer.pending_assignee_user_name = message.mentioned_user_name or str(message.reply_to_user_id)
+            buffer.pending_assignee_telegram_display_name = message.mentioned_telegram_display_name or message.mentioned_user_name or ""
+            return self._tpl("TPL_ASK_ASSIGNEE")
+
         if message.has_media or not message.text or not message.text.strip():
             return (
                 "Chọn người được giao việc: reply tin nhắn của họ hoặc @mention họ. "
