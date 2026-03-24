@@ -22,6 +22,51 @@ Chi tiết kỹ thuật và contract nằm trong thư mục [`Documents/`](Docum
 
   Trên Windows, nếu thiếu timezone `Asia/Ho_Chi_Minh`, có thể cài thêm: `pip install tzdata`.
 
+## Cài đặt nhanh trên Windows
+
+### 1. Clone repo và tạo môi trường ảo
+
+```powershell
+cd C:\dev\Chatbot
+git clone https://github.com/hieuvt/jira_chatbot_tele.git JiraChatbotTele
+cd .\JiraChatbotTele
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+```
+
+Nếu PowerShell chặn script:
+
+```powershell
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+```
+
+### 2. Cài thư viện
+
+```powershell
+python -m pip install --upgrade pip
+pip install python-telegram-bot apscheduler tzdata
+```
+
+### 3. Tạo file cấu hình chạy thật
+
+```powershell
+Copy-Item .\config\config.example.json .\config\config.json
+```
+
+Sau đó mở `config/config.json` để điền:
+- `telegram.bot_token`
+- `telegram.allowed_chat_ids`
+- `jira.base_url`, `jira.email`, `jira.api_token`
+- `jira.project_key`, `jira.issue_type_id`, `jira.subtask_issue_type_id`
+
+### 4. Chạy thử bot
+
+```powershell
+python .\src\bot\entrypoint.py
+```
+
+Nếu thấy log `Application started` là bot đã polling thành công.
+
 ## Chuẩn bị Jira (Jira Cloud)
 
 1. **Tài khoản service** (email + [API token](https://id.atlassian.com/manage-profile/security/api-tokens)) dùng cho bot — không dùng token cá nhân của từng nhân viên cho thao tác bot.
@@ -64,6 +109,52 @@ Chạy bot từ **thư mục gốc repo**:
 ```bash
 python src/bot/entrypoint.py
 ```
+
+## Tự chạy khi bật máy (Windows Task Scheduler)
+
+Repo đã có sẵn:
+- `run_bot.bat`: chạy bot từ đúng thư mục repo, ghi log vào `logs/startup-bot.log`.
+- `scripts/windows/register_startup_task.ps1`: đăng ký task startup.
+
+### 1. Đăng ký task (PowerShell chạy quyền Administrator)
+
+```powershell
+cd C:\dev\Chatbot\JiraChatbotTele
+powershell -ExecutionPolicy Bypass -File .\scripts\windows\register_startup_task.ps1 -TaskName "JiraTelegramBot" -PythonExe "C:\Python313\python.exe"
+```
+
+Ghi chú:
+- Task được tạo với trigger **AtStartup**.
+- Chế độ chạy nền: **Run whether user is logged on or not**.
+- Nếu đã có task cùng tên, script sẽ ghi đè (`-Force`).
+
+### 2. Chạy thử ngay không cần reboot
+
+```powershell
+Start-ScheduledTask -TaskName "JiraTelegramBot"
+```
+
+### 3. Kiểm tra trạng thái
+
+- Mở Task Scheduler và xem `Last Run Result` (mã `0x0` là thành công).
+- Xem log runtime:
+
+```powershell
+Get-Content .\logs\startup-bot.log -Tail 100
+```
+
+### 4. Gỡ task khi không dùng
+
+```powershell
+Unregister-ScheduledTask -TaskName "JiraTelegramBot" -Confirm:$false
+```
+
+### Checklist verify sau khi cài
+
+1. Đăng ký task thành công bằng script PowerShell.
+2. `Start-ScheduledTask` chạy được, bot khởi động và log có dòng `Starting JiraTelegramBot`.
+3. Reboot máy, task tự chạy lại sau khi máy lên.
+4. `Last Run Result` không lỗi và log không có traceback mới.
 
 ## Cấu hình: `config/templates.json`
 
