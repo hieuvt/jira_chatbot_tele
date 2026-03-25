@@ -57,3 +57,4 @@ class JiraIssueRecord:
     due_date: str | None
     status: str
     assignee_account_id: str | None
+    status_category_key: str = ""  # Jira: new / indeterminate / done — loại done khỏi báo cáo due

@@ -194,6 +194,8 @@ class JiraClient:
                 break
             for issue in issues:
                 record = self._to_issue_record(issue)
+                if (record.status_category_key or "").strip().lower() == "done":
+                    continue
                 if not self._in_due_window(record_due_date=record.due_date, now=query.now, window_days=query.window_days):
                     continue
                 group_key = record.assignee_account_id or "unassigned"
@@ -451,12 +453,14 @@ class JiraClient:
         fields = issue.get("fields", {}) if isinstance(issue.get("fields"), dict) else {}
         assignee = fields.get("assignee", {}) if isinstance(fields.get("assignee"), dict) else {}
         status = fields.get("status", {}) if isinstance(fields.get("status"), dict) else {}
+        st_cat = status.get("statusCategory", {}) if isinstance(status.get("statusCategory"), dict) else {}
         return JiraIssueRecord(
             issue_key=str(issue.get("key", "")).strip(),
             summary=str(fields.get("summary", "")).strip(),
             due_date=str(fields.get("duedate", "")).strip() or None,
             status=str(status.get("name", "")).strip(),
             assignee_account_id=str(assignee.get("accountId", "")).strip() or None,
+            status_category_key=str(st_cat.get("key", "")).strip().lower(),
         )
 
     def _in_due_window(self, *, record_due_date: str | None, now: datetime, window_days: int) -> bool:
