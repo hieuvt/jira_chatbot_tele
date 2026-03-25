@@ -11,6 +11,22 @@ from telegram.ext import Application, ContextTypes, MessageHandler, filters
 from src.conversation.state_machine import FileMeta, MessageInput, build_filename
 
 
+def _telegram_username_or_none(user: User | None) -> str | None:
+    """@username chuẩn hoá (lowercase) để tra/ghi users.json; None nếu user không có username."""
+    if user is None:
+        return None
+    username = getattr(user, "username", None)
+    if isinstance(username, str) and username.strip():
+        return username.strip().lstrip("@").strip().lower() or None
+    return None
+
+
+def _normalize_username_str(raw: str | None) -> str | None:
+    if raw is None or not str(raw).strip():
+        return None
+    return str(raw).strip().lstrip("@").strip().lower() or None
+
+
 def _telegram_user_name_for_store(user: User) -> str:
     """Nhãn lưu `user_name` trong users.json: ưu tiên @username, rồi họ tên, cuối cùng là id."""
     username = getattr(user, "username", None)
@@ -230,19 +246,29 @@ def register_handlers(
         eu = update.effective_user
         sender_user_name = _telegram_user_name_for_store(eu)
         sender_telegram_display_name = _telegram_display_name_only(eu)
+        sender_username = _telegram_username_or_none(eu)
 
         reply_fu = tg_message.reply_to_message.from_user if tg_message.reply_to_message else None
         reply_target_user_name = _telegram_user_name_for_store(reply_fu) if reply_fu else None
         reply_target_telegram_display_name = _telegram_display_name_only(reply_fu) if reply_fu else None
+        reply_to_username_norm = _normalize_username_str(
+            tg_message.reply_to_message.from_user.username
+            if tg_message.reply_to_message and tg_message.reply_to_message.from_user
+            else None
+        )
 
         mu = _extract_mention_user(tg_message)
         if mu:
             mentioned_user_name = _telegram_user_name_for_store(mu)
             mentioned_telegram_display_name = _telegram_display_name_only(mu)
+            mentioned_username = _telegram_username_or_none(mu) or _normalize_username_str(
+                _extract_mentioned_user_username(tg_message)
+            )
         else:
             un = _extract_mentioned_user_username(tg_message)
             mentioned_user_name = un if un else None
             mentioned_telegram_display_name = "" if un else None
+            mentioned_username = _normalize_username_str(un)
 
         message_input = MessageInput(
             chat_id=update.effective_chat.id,
@@ -251,13 +277,10 @@ def register_handlers(
             reply_to_user_id=(
                 tg_message.reply_to_message.from_user.id if tg_message.reply_to_message else None
             ),
-            reply_to_username=(
-                (tg_message.reply_to_message.from_user.username)
-                if tg_message.reply_to_message and tg_message.reply_to_message.from_user
-                else None
-            ),
+            reply_to_username=reply_to_username_norm,
             mentioned_user_id=_extract_mentioned_user_id(tg_message),
-            mentioned_username=_extract_mentioned_user_username(tg_message),
+            mentioned_username=mentioned_username,
+            sender_username=sender_username,
             sender_user_name=sender_user_name,
             sender_telegram_display_name=sender_telegram_display_name,
             reply_target_user_name=reply_target_user_name,

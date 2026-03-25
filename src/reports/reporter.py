@@ -14,10 +14,10 @@ from src.jira.models import JiraIssueRecord, QueryIssuesRequest
 from src.storage.users_store import UsersStore
 
 
-def _format_report_assignee_mention(*, telegram_id: str, record: dict[str, str] | None) -> str:
+def _format_report_assignee_mention(*, telegram_username: str, record: dict[str, str] | None) -> str:
     """
     Chuỗi hiển thị sau 'Assignee: ' (sẽ html.escape khi gửi).
-    Ưu tiên @user_name, rồi @telegram_display_name, rồi số telegram_id (không @).
+    Ưu tiên @user_name (username trong store), rồi @telegram_display_name, cuối cùng username_key thô (không @).
     """
     dn = ""
     un = ""
@@ -26,15 +26,11 @@ def _format_report_assignee_mention(*, telegram_id: str, record: dict[str, str] 
         un = str(record.get("user_name", "")).strip()
     if un:
         body = un.lstrip("@").strip()
-        return f"@{body}" if body else telegram_id
+        return f"@{body}" if body else telegram_username
     if dn:
         body = dn.lstrip("@").strip()
-        return f"@{body}" if body else telegram_id
-    tid = str(telegram_id).strip()
-    if tid.isdigit():
-        return tid
-    body = tid.lstrip("@").strip()
-    return f"@{body}" if body else tid
+        return f"@{body}" if body else telegram_username
+    return str(telegram_username).strip() or "Unknown"
 
 
 @dataclass(frozen=True)
@@ -49,7 +45,7 @@ class ReportIssue:
 class AssigneeReport:
     """Một assignee (hoặc Unassigned): hai danh sách overdue / upcoming."""
 
-    telegram_id: str | None  # None = nhóm Unassigned
+    telegram_username: str | None  # None = nhóm Unassigned; lowercase @username khớp users.json
     assignee_mention_text: str  # Chuỗi sau 'Assignee: ' (có thể có @)
     overdue: list[ReportIssue]
     upcoming: list[ReportIssue]
@@ -93,7 +89,7 @@ class Reporter:
             raise ValueError("now must be timezone-aware datetime")
 
         today = now.date()
-        reverse_map = self.users_store.get_reverse_mapping()  # jira_id -> telegram_id
+        reverse_map = self.users_store.get_reverse_mapping()  # jira_id -> telegram_username
 
         query = QueryIssuesRequest(
             project_key=self.project_key,
@@ -129,13 +125,13 @@ class Reporter:
 
             # Lọc theo mapping Telegram: Unassigned luôn hiện; assignee khác cần có trong reverse_map
             if not is_unassigned:
-                telegram_id = reverse_map.get(str(assignee_jira_id).strip())
-                if not telegram_id:
+                tuser = reverse_map.get(str(assignee_jira_id).strip())
+                if not tuser:
                     continue
-                rec = self.users_store.get_user_record_by_telegram_id(telegram_id)
-                mention_text = _format_report_assignee_mention(telegram_id=telegram_id, record=rec)
+                rec = self.users_store.get_user_record_by_user_name(tuser)
+                mention_text = _format_report_assignee_mention(telegram_username=tuser, record=rec)
             else:
-                telegram_id = None
+                tuser = None
                 mention_text = "Unassigned"
 
             # Sắp issue: due_date tăng, rồi issue_key
@@ -145,23 +141,18 @@ class Reporter:
             if overdue_items or upcoming_items:
                 assignee_reports.append(
                     AssigneeReport(
-                        telegram_id=telegram_id,
+                        telegram_username=tuser,
                         assignee_mention_text=mention_text,
                         overdue=overdue_items,
                         upcoming=upcoming_items,
                     )
                 )
 
-        # Thứ tự assignee: telegram_id số tăng dần, Unassigned cuối
-        def _assignee_sort_key(a: AssigneeReport) -> tuple[int, int, int]:
-            if a.telegram_id is None:
-                return (1, 0, 0)
-            try:
-                # Telegram id thường là số — sort số
-                return (0, 0, int(a.telegram_id))
-            except Exception:
-                # Không parse int: xếp sau nhóm số
-                return (0, 1, 0)
+        # Thứ tự assignee: telegram_username (chuỗi) tăng dần, Unassigned cuối
+        def _assignee_sort_key(a: AssigneeReport) -> tuple[int, str]:
+            if a.telegram_username is None:
+                return (1, "")
+            return (0, a.telegram_username.lower())
 
         assignee_reports.sort(key=_assignee_sort_key)
 

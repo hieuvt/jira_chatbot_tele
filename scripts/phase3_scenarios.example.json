@@ -4,8 +4,9 @@
       "name": "my_task_minimal_success",
       "default_chat_id": 9101,
       "default_user_id": 8101,
+      "default_sender_username": "u8101",
       "user_mapping": {
-        "8101": "jira-user-8101"
+        "u8101": "jira-user-8101"
       },
       "member_ids": [
         "jira-user-8101"
@@ -53,8 +54,9 @@
       "name": "timeout_then_unknown",
       "default_chat_id": 9102,
       "default_user_id": 8102,
+      "default_sender_username": "u8102",
       "user_mapping": {
-        "8102": "jira-user-8102"
+        "u8102": "jira-user-8102"
       },
       "member_ids": [
         "jira-user-8102"

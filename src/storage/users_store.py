@@ -1,4 +1,4 @@
-"""Lưu trữ `users.json`: mapping Telegram ↔ Jira; ghi atomic + file lock (Windows msvcrt / Unix fcntl)."""
+"""Lưu trữ `users.json`: mapping Telegram @username ↔ Jira; ghi atomic + file lock (Windows msvcrt / Unix fcntl)."""
 
 from __future__ import annotations
 
@@ -14,6 +14,14 @@ from src.common.logging import get_logger
 logger = get_logger("storage.users_store")
 
 
+def _normalize_username_key(raw: str | None) -> str:
+    """Chuẩn hoá username làm khóa: strip, bỏ @, lowercase."""
+    if raw is None:
+        return ""
+    s = str(raw).strip().lstrip("@").strip()
+    return s.lower()
+
+
 class UsersStore:
     # Khóa 1 byte trên file `.lock` cạnh users.json (Windows: msvcrt)
     _LOCK_BYTE_LEN = 1
@@ -25,14 +33,14 @@ class UsersStore:
         # Cùng thư mục: users.json.lock
         self.lock_path = file_path.with_name(f"{file_path.name}.lock")
 
-    def get_jira_account_id(self, telegram_account_id: str) -> str | None:
-        """Tra `jira_id` theo `telegram_id`; None nếu không có hoặc giá trị rỗng."""
-        if telegram_account_id is None or not str(telegram_account_id).strip():
+    def get_jira_account_id(self, telegram_username: str) -> str | None:
+        """Tra `jira_id` theo Telegram @username (đã chuẩn hoá lowercase); None nếu không có hoặc rỗng."""
+        key = _normalize_username_key(telegram_username)
+        if not key:
             return None
         records = self._read_file(create_if_missing=True)
-        key = str(telegram_account_id).strip()
         for rec in records:
-            if rec.get("telegram_id") != key:
+            if _record_username_key(rec) != key:
                 continue
             jira_raw = rec.get("jira_id")
             if isinstance(jira_raw, str) and jira_raw.strip():
@@ -41,50 +49,42 @@ class UsersStore:
 
     def get_reverse_mapping(self) -> dict[str, str]:
         """
-        Map ngược cho reporter: key = jira_account_id, value = telegram_account_id.
-        Trùng jira: giữ telegram_id nhỏ hơn (so sánh int nếu được).
+        Map ngược cho reporter: key = jira_account_id, value = user_name (@username, lowercase).
+        Trùng jira: giữ user_name nhỏ hơn theo so sánh chuỗi.
         """
         records = self._read_file(create_if_missing=True)
         reverse: dict[str, str] = {}
         for rec in records:
-            telegram_id = str(rec.get("telegram_id", "")).strip()
+            uname = _record_username_key(rec)
             jira_raw = rec.get("jira_id")
             if not isinstance(jira_raw, str):
                 continue
             jira_id = jira_raw.strip()
-            if not jira_id or not telegram_id:
+            if not jira_id or not uname:
                 continue
 
             existing = reverse.get(jira_id)
             if existing is None:
-                reverse[jira_id] = telegram_id
+                reverse[jira_id] = uname
                 continue
-
-            try:
-                if int(telegram_id) < int(existing):
-                    reverse[jira_id] = telegram_id
-            except ValueError:
-                if telegram_id < existing:
-                    reverse[jira_id] = telegram_id
+            if uname < existing:
+                reverse[jira_id] = uname
         return reverse
 
-    def get_user_record_by_telegram_id(self, telegram_account_id: str) -> dict[str, str] | None:
-        """
-        Một bản ghi đầy đủ (chuẩn hoá key string) cho reporter; None nếu không có dòng.
-        """
-        if telegram_account_id is None or not str(telegram_account_id).strip():
+    def get_user_record_by_user_name(self, telegram_username: str) -> dict[str, str] | None:
+        """Một bản ghi chuẩn hoá cho reporter; None nếu không có dòng."""
+        key = _normalize_username_key(telegram_username)
+        if not key:
             return None
-        key = str(telegram_account_id).strip()
         records = self._read_file(create_if_missing=True)
         for rec in records:
-            if str(rec.get("telegram_id", "")).strip() != key:
+            if _record_username_key(rec) != key:
                 continue
             un_raw = rec.get("user_name")
             dn_raw = rec.get("telegram_display_name")
             jira_raw = rec.get("jira_id")
             return {
                 "user_name": str(un_raw).strip() if isinstance(un_raw, str) else "",
-                "telegram_id": key,
                 "telegram_display_name": str(dn_raw).strip() if isinstance(dn_raw, str) else "",
                 "jira_id": jira_raw.strip() if isinstance(jira_raw, str) else "",
             }
@@ -92,42 +92,37 @@ class UsersStore:
 
     def upsert_mapping(
         self,
-        telegram_account_id: str,
+        telegram_username: str,
         jira_account_id: str,
         *,
-        user_name: str = "",
         telegram_display_name: str = "",
     ) -> bool:
         """
         Thêm hoặc (khi jira_id cũ invalid) ghi đè mapping. Trả True nếu đã ghi mới/đổi.
-        Không ghi đè jira_id hợp lệ đã có cho cùng telegram_id.
+        Không ghi đè jira_id hợp lệ đã có cho cùng @username.
+        telegram_username rỗng sau chuẩn hoá => no-op (user không có @username).
         """
-        telegram_key = str(telegram_account_id).strip() if telegram_account_id is not None else ""
-        if not telegram_key:
+        username_key = _normalize_username_key(telegram_username)
+        if not username_key:
             return False
 
         jira_value = str(jira_account_id).strip() if jira_account_id is not None else ""
         if not jira_value:
             return False
 
-        name_stored = str(user_name).strip() if user_name is not None else ""
-        if not name_stored:
-            name_stored = telegram_key
-
         display_stored = str(telegram_display_name).strip() if telegram_display_name is not None else ""
 
         try:
             with self._acquire_lock():
                 records = self._read_file(create_if_missing=True)
-                idx = _index_by_telegram_id(records, telegram_key)
+                idx = _index_by_username_key(records, username_key)
                 if idx is not None:
                     existing_jira = records[idx].get("jira_id")
                     if isinstance(existing_jira, str) and existing_jira.strip():
                         return False
 
                 new_rec = {
-                    "user_name": name_stored,
-                    "telegram_id": telegram_key,
+                    "user_name": username_key,
                     "telegram_display_name": display_stored,
                     "jira_id": jira_value,
                 }
@@ -173,33 +168,32 @@ class UsersStore:
             return []
 
         if isinstance(content, dict):
-            return _dedupe_by_telegram_id(_legacy_dict_to_records(content))
+            return _dedupe_by_username_key(_legacy_dict_to_records(content))
 
         if isinstance(content, list):
-            return _dedupe_by_telegram_id(_normalize_record_list(content))
+            return _dedupe_by_username_key(_normalize_record_list(content))
 
         return []
 
     def _write_atomic(self, records: list[dict[str, str]]) -> bool:
-        """Ghi `.tmp` rồi `os.replace` sang users.json; chỉ giữ bản ghi có jira_id hợp lệ."""
+        """Ghi `.tmp` rồi `os.replace` sang users.json; chỉ giữ bản ghi có user_name + jira_id hợp lệ."""
         normalized: list[dict[str, str]] = []
         for rec in records:
-            tid = str(rec.get("telegram_id", "")).strip()
+            uname = _record_username_key(rec)
             jira_raw = rec.get("jira_id")
-            if not tid:
+            if not uname:
                 continue
             if not isinstance(jira_raw, str) or not jira_raw.strip():
                 continue
             normalized.append(
                 {
-                    "user_name": str(rec.get("user_name", "")).strip() or tid,
-                    "telegram_id": tid,
+                    "user_name": uname,
                     "telegram_display_name": str(rec.get("telegram_display_name", "")).strip(),
                     "jira_id": jira_raw.strip(),
                 }
             )
 
-        normalized.sort(key=lambda r: r["telegram_id"])
+        normalized.sort(key=lambda r: r["user_name"])
 
         tmp_path = self.file_path.with_name(f"{self.file_path.name}.tmp")
         try:
@@ -272,27 +266,31 @@ class UsersStore:
                 pass
 
 
-def _dedupe_by_telegram_id(records: list[dict[str, str]]) -> list[dict[str, str]]:
-    """Gộp trùng telegram_id: bản ghi sau thắng."""
-    by_id: dict[str, dict[str, str]] = {}
+def _record_username_key(rec: dict[str, str]) -> str:
+    return _normalize_username_key(rec.get("user_name"))
+
+
+def _dedupe_by_username_key(records: list[dict[str, str]]) -> list[dict[str, str]]:
+    """Gộp trùng user_name (chuẩn hoá): bản ghi sau thắng."""
+    by_key: dict[str, dict[str, str]] = {}
     for rec in records:
-        tid = str(rec.get("telegram_id", "")).strip()
-        if not tid:
+        key = _record_username_key(rec)
+        if not key:
             continue
-        by_id[tid] = rec
-    return list(by_id.values())
+        by_key[key] = rec
+    return list(by_key.values())
 
 
-def _index_by_telegram_id(records: list[dict[str, str]], telegram_key: str) -> int | None:
-    """Chỉ số dòng trong list khớp telegram_id, hoặc None."""
+def _index_by_username_key(records: list[dict[str, str]], username_key: str) -> int | None:
+    """Chỉ số dòng trong list khớp user_name (đã chuẩn hoá), hoặc None."""
     for i, rec in enumerate(records):
-        if str(rec.get("telegram_id", "")).strip() == telegram_key:
+        if _record_username_key(rec) == username_key:
             return i
     return None
 
 
 def _legacy_dict_to_records(content: dict[Any, Any]) -> list[dict[str, str]]:
-    """Migrate schema cũ {telegram_id: jira_id} sang list bản ghi chuẩn."""
+    """Migrate schema cũ {telegram_id: jira_id} sang bản ghi (user_name = key chuẩn hoá)."""
     out: list[dict[str, str]] = []
     for k, v in content.items():
         tid = str(k).strip()
@@ -301,8 +299,7 @@ def _legacy_dict_to_records(content: dict[Any, Any]) -> list[dict[str, str]]:
         jira_s = v.strip() if isinstance(v, str) else ""
         out.append(
             {
-                "user_name": "",
-                "telegram_id": tid,
+                "user_name": _normalize_username_key(tid),
                 "telegram_display_name": "",
                 "jira_id": jira_s,
             }
@@ -311,30 +308,29 @@ def _legacy_dict_to_records(content: dict[Any, Any]) -> list[dict[str, str]]:
 
 
 def _normalize_record_list(content: list[Any]) -> list[dict[str, str]]:
-    """Chuẩn hoá phần tử list object từ JSON thành dict đồng nhất."""
+    """Chuẩn hoá phần tử list object từ JSON thành dict đồng nhất (không còn telegram_id trên đĩa)."""
     out: list[dict[str, str]] = []
     for item in content:
         if not isinstance(item, dict):
             continue
+        un_raw = item.get("user_name")
+        user_part = str(un_raw).strip() if isinstance(un_raw, str) else ""
         tid_raw = item.get("telegram_id")
-        if tid_raw is None:
+        tid_part = str(tid_raw).strip() if tid_raw is not None and str(tid_raw).strip() else ""
+
+        key = _normalize_username_key(user_part) if user_part else _normalize_username_key(tid_part)
+        if not key:
             continue
-        tid = str(tid_raw).strip()
-        if not tid:
-            continue
+
         jira_raw = item.get("jira_id")
         jira_s = jira_raw.strip() if isinstance(jira_raw, str) else ""
-
-        un = item.get("user_name")
-        user_name = str(un).strip() if isinstance(un, str) else ""
 
         dn = item.get("telegram_display_name")
         display_name = str(dn).strip() if isinstance(dn, str) else ""
 
         out.append(
             {
-                "user_name": user_name,
-                "telegram_id": tid,
+                "user_name": key,
                 "telegram_display_name": display_name,
                 "jira_id": jira_s,
             }

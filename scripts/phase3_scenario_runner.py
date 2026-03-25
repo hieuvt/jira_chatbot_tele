@@ -61,15 +61,37 @@ def _run_step(machine: object, step: dict[str, Any], runtime: dict[str, Any]) ->
     action = str(step.get("action", "")).strip().lower()
     chat_id = int(step.get("chat_id", runtime["default_chat_id"]))
     user_id = int(step.get("user_id", runtime["default_user_id"]))
+    default_su = runtime.get("default_sender_username")
+    if isinstance(default_su, str):
+        default_su = default_su.strip() or None
+    else:
+        default_su = None
 
     if action == "text":
         text = str(step.get("text", ""))
-        return machine.handle_message(make_text(chat_id, user_id, text))
+        su = step.get("sender_username", default_su)
+        su_s = str(su).strip() if su is not None else ""
+        return machine.handle_message(
+            make_text(chat_id, user_id, text, sender_username=su_s or None)
+        )
 
     if action == "reply":
         reply_to_user_id = int(step["reply_to_user_id"])
         text = str(step.get("text", ""))
-        return machine.handle_message(make_reply(chat_id, user_id, reply_to_user_id, text=text))
+        su = step.get("sender_username", default_su)
+        su_s = str(su).strip() if su is not None else ""
+        rtu = step.get("reply_to_username")
+        rtu_s = str(rtu).strip().lower() if rtu is not None and str(rtu).strip() else None
+        return machine.handle_message(
+            make_reply(
+                chat_id,
+                user_id,
+                reply_to_user_id,
+                text=text,
+                reply_to_username=rtu_s,
+                sender_username=su_s or None,
+            )
+        )
 
     if action == "attachment":
         filename = str(step.get("filename", "file.txt"))
@@ -127,7 +149,13 @@ def run_scenario(scenario: dict[str, Any], *, stop_on_fail: bool) -> tuple[int, 
         member_ids={str(item) for item in member_ids},
         admin_ids={str(item) for item in admin_ids},
     )
-    runtime = {"default_chat_id": default_chat_id, "default_user_id": default_user_id}
+    dsu = scenario.get("default_sender_username")
+    default_sender_username: str | None = str(dsu).strip() if dsu is not None and str(dsu).strip() else None
+    runtime = {
+        "default_chat_id": default_chat_id,
+        "default_user_id": default_user_id,
+        "default_sender_username": default_sender_username,
+    }
     steps = scenario.get("steps", [])
     if not isinstance(steps, list):
         raise ValueError(f"Scenario '{name}' steps must be array.")

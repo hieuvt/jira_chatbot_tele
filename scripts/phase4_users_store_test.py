@@ -28,11 +28,15 @@ def _check(condition: bool, label: str) -> int:
     return 1
 
 
-def _jira_for_telegram(content: Any, tid: str) -> str | None:
+def _jira_for_username(content: Any, username: str) -> str | None:
     if not isinstance(content, list):
         return None
+    key = str(username).strip().lstrip("@").strip().lower()
     for rec in content:
-        if isinstance(rec, dict) and str(rec.get("telegram_id")) == tid:
+        if not isinstance(rec, dict):
+            continue
+        un = str(rec.get("user_name", "")).strip().lower()
+        if un == key:
             v = rec.get("jira_id")
             return v if isinstance(v, str) else None
     return None
@@ -45,13 +49,13 @@ def test_get_jira_account_id_empty_and_invalid() -> int:
         p.write_text("{}", encoding="utf-8")
         store = UsersStore(p)
 
-        failures += _check(store.get_jira_account_id("1") is None, "get: missing key => None")
-        failures += _check(store.get_jira_account_id("   ") is None, "get: whitespace telegram id => None")
+        failures += _check(store.get_jira_account_id("alice") is None, "get: missing key => None")
+        failures += _check(store.get_jira_account_id("   ") is None, "get: whitespace username => None")
 
         p.write_text(json.dumps({"1": "   "}), encoding="utf-8")
-        failures += _check(store.get_jira_account_id("1") is None, "get: blank value => None")
+        failures += _check(store.get_jira_account_id("1") is None, "get: legacy dict blank value => None")
         p.write_text(json.dumps({"2": 123}), encoding="utf-8")
-        failures += _check(store.get_jira_account_id("2") is None, "get: non-string value => None")
+        failures += _check(store.get_jira_account_id("2") is None, "get: legacy non-string value => None")
 
     return failures
 
@@ -62,25 +66,25 @@ def test_upsert_validation_and_no_overwrite_valid() -> int:
         p = Path(d) / "users.json"
         store = UsersStore(p)
 
-        failures += _check(not store.upsert_mapping("   ", "jira-1"), "upsert: blank telegram id => no-op")
-        failures += _check(not p.exists(), "upsert: blank telegram id => does not create file")
+        failures += _check(not store.upsert_mapping("   ", "jira-1"), "upsert: blank username => no-op")
+        failures += _check(not p.exists(), "upsert: blank username => does not create file")
 
-        failures += _check(not store.upsert_mapping("1", "   "), "upsert: blank jira id => no-op")
+        failures += _check(not store.upsert_mapping("alice", "   "), "upsert: blank jira id => no-op")
         failures += _check(not p.exists(), "upsert: blank jira id => does not create file")
 
         added = store.upsert_mapping(
-            "1",
+            "alice",
             "jira-1",
-            user_name="alice",
             telegram_display_name="Alice A",
         )
         failures += _check(added, "upsert: add when key missing => added=true")
         failures += _check(p.exists(), "upsert: creates users.json when valid input")
-        failures += _check(store.get_jira_account_id("1") == "jira-1", "get after add => stored mapping")
+        failures += _check(store.get_jira_account_id("alice") == "jira-1", "get after add => stored mapping")
+        failures += _check(store.get_jira_account_id("Alice") == "jira-1", "get case-insensitive username")
 
-        added2 = store.upsert_mapping("1", "jira-2", user_name="alice", telegram_display_name="Alice A")
+        added2 = store.upsert_mapping("alice", "jira-2", telegram_display_name="Alice A")
         failures += _check(not added2, "upsert: existing valid mapping => added=false")
-        failures += _check(store.get_jira_account_id("1") == "jira-1", "upsert: existing valid mapping preserved")
+        failures += _check(store.get_jira_account_id("alice") == "jira-1", "upsert: existing valid mapping preserved")
 
     return failures
 
@@ -92,14 +96,14 @@ def test_upsert_overwrite_invalid_value() -> int:
         p.write_text(json.dumps({"1": "   ", "2": "ok"}), encoding="utf-8")
         store = UsersStore(p)
 
-        added = store.upsert_mapping("1", "jira-1-new", user_name="u1", telegram_display_name="")
-        failures += _check(added, "upsert: overwrite when existing value is blank string")
+        added = store.upsert_mapping("1", "jira-1-new", telegram_display_name="")
+        failures += _check(added, "upsert: overwrite when existing legacy value is blank string")
         failures += _check(store.get_jira_account_id("1") == "jira-1-new", "upsert: overwritten value is retrievable")
         failures += _check(store.get_jira_account_id("2") == "ok", "upsert: keeps other valid mappings")
 
         p.write_text(json.dumps({"3": 123}), encoding="utf-8")
         store2 = UsersStore(p)
-        added2 = store2.upsert_mapping("3", "jira-3", user_name="u3", telegram_display_name="")
+        added2 = store2.upsert_mapping("3", "jira-3", telegram_display_name="")
         failures += _check(added2, "upsert: overwrite when existing value is non-string")
         failures += _check(store2.get_jira_account_id("3") == "jira-3", "upsert: overwritten non-string mapping works")
 
@@ -113,7 +117,7 @@ def test_upsert_resilience_invalid_json_and_atomicity() -> int:
         p.write_text("{not-json", encoding="utf-8")
         store = UsersStore(p)
 
-        added = store.upsert_mapping("1", "jira-1", user_name="n1", telegram_display_name="")
+        added = store.upsert_mapping("bob", "jira-1", telegram_display_name="")
         failures += _check(added, "upsert: invalid JSON => treat as empty => added=true")
 
         try:
@@ -121,7 +125,7 @@ def test_upsert_resilience_invalid_json_and_atomicity() -> int:
         except Exception:
             content = None
         failures += _check(isinstance(content, list), "upsert: users.json after write is valid JSON array")
-        failures += _check(_jira_for_telegram(content, "1") == "jira-1", "upsert: mapping exists after recover")
+        failures += _check(_jira_for_username(content, "bob") == "jira-1", "upsert: mapping exists after recover")
 
         tmp_path = p.with_name(f"{p.name}.tmp")
         failures += _check(not tmp_path.exists(), "upsert: tmp file should not remain after success")

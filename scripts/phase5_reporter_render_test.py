@@ -5,7 +5,7 @@ Kiểm tra:
 - Ranh giới quá hạn (< today) và sắp đến hạn ([today, today+N])
 - Lọc assignee theo mapping users.json
 - Nhóm Unassigned vẫn render dù không có mapping
-- Thứ tự: assignee theo telegram_id tăng, Unassigned cuối; issue theo due rồi key
+- Thứ tự: assignee theo user_name (chuỗi) tăng, Unassigned cuối; issue theo due rồi key
 - Định dạng: block 1 hai dòng tổng; block 2 heading chỉ khi có issue; một dòng trống giữa hai mục khi cả hai có dữ liệu
 """
 
@@ -56,7 +56,7 @@ def main() -> int:
     now = datetime(2026, 3, 20, 9, 0, tzinfo=timezone.utc)
     window_days = 3
 
-    # users.json: array of records (telegram_id <-> jira_id); reverse map for reporter
+    # users.json: @username (user_name) <-> jira_id; reverse map for reporter
     with tempfile.TemporaryDirectory() as tmp:
         users_path = Path(tmp) / "users.json"
         users_path.write_text(
@@ -64,13 +64,11 @@ def main() -> int:
                 [
                     {
                         "user_name": "fallback_two",
-                        "telegram_id": "2",
                         "telegram_display_name": "User Two",
                         "jira_id": "jira-2",
                     },
                     {
                         "user_name": "fallback_ten",
-                        "telegram_id": "10",
                         "telegram_display_name": "User Ten",
                         "jira_id": "jira-1",
                     },
@@ -81,7 +79,7 @@ def main() -> int:
         users_store = UsersStore(users_path)
 
         grouped: dict[str, list[JiraIssueRecord]] = {
-            # telegram "10"
+            # fallback_ten / jira-1
             "jira-1": [
                 JiraIssueRecord(
                     issue_key="OM-101",
@@ -112,7 +110,7 @@ def main() -> int:
                     assignee_account_id="jira-1",
                 ),
             ],
-            # telegram "2"
+            # fallback_two / jira-2
             "jira-2": [
                 JiraIssueRecord(
                     issue_key="OM-050",
@@ -162,44 +160,37 @@ def main() -> int:
             "Block 1 exact totals text",
         )
 
-        # Included assignees only: telegram id 2, telegram id 10, Unassigned => 3 block2 messages + block1
+        # Included assignees: fallback_ten, fallback_two, Unassigned => 3 block2 messages + block1
         failures += _check(len(messages) == 4, "Total messages count (block1 + 3 assignees)")
 
-        # Assignee order: telegram "2" first, "10" second, Unassigned last (@ from user_name)
-        failures += _check(messages[1].startswith("Assignee: @fallback_two\n"), "Assignee order: telegram 2 first")
-        failures += _check(messages[2].startswith("Assignee: @fallback_ten\n"), "Assignee order: telegram 10 second")
+        # Assignee order: fallback_ten < fallback_two lexicographically, Unassigned last
+        failures += _check(messages[1].startswith("Assignee: @fallback_ten\n"), "Assignee order: fallback_ten first")
+        failures += _check(messages[2].startswith("Assignee: @fallback_two\n"), "Assignee order: fallback_two second")
         failures += _check(messages[3].startswith("Assignee: Unassigned\n"), "Assignee order: Unassigned last")
 
-        # Assignee '2': only upcoming => no "Quá hạn:" heading
-        lines_2 = messages[1].splitlines()
-        failures += _check(lines_2[0] == "Assignee: @fallback_two", "Assignee '2' first line (@ user_name)")
-        failures += _check("Quá hạn:" not in lines_2, "Assignee '2' should not include Quá hạn section")
-        failures += _check(lines_2[1] == "Sắp đến hạn:", "Assignee '2' should have Sắp đến hạn heading")
+        # Assignee jira-1 (fallback_ten): overdue + upcoming => has blank line exactly once between headings
+        lines_ten = messages[1].splitlines()
+        failures += _check(lines_ten[0] == "Assignee: @fallback_ten", "Assignee fallback_ten first line (@ user_name)")
+        failures += _check(lines_ten[1] == "Quá hạn:", "Assignee fallback_ten has Quá hạn heading")
+        failures += _check(lines_ten[2] == "- OM-100: Overdue A (due: 2026-03-19)", "Assignee fallback_ten overdue issue")
+        failures += _check(lines_ten[3] == "", "Assignee fallback_ten has exactly 1 blank line between sections")
+        failures += _check(lines_ten[4] == "Sắp đến hạn:", "Assignee fallback_ten has Sắp đến hạn heading")
+
+        # Upcoming ordering inside assignee jira-1:
+        failures += _check(lines_ten[5] == "- OM-099: Upcoming T (due: 2026-03-20)", "Upcoming sorting 1")
+        failures += _check(lines_ten[6] == "- OM-102: Upcoming C (due: 2026-03-22)", "Upcoming sorting 2")
+        failures += _check(lines_ten[7] == "- OM-101: Upcoming D (due: 2026-03-23)", "Upcoming sorting 3")
+        failures += _check("" not in lines_ten[5:8], "No blank lines between issue lines (fallback_ten)")
+
+        # Assignee jira-2 (fallback_two): only upcoming => no "Quá hạn:" heading
+        lines_two = messages[2].splitlines()
+        failures += _check(lines_two[0] == "Assignee: @fallback_two", "Assignee fallback_two first line (@ user_name)")
+        failures += _check("Quá hạn:" not in lines_two, "Assignee fallback_two should not include Quá hạn section")
+        failures += _check(lines_two[1] == "Sắp đến hạn:", "Assignee fallback_two should have Sắp đến hạn heading")
         failures += _check(
-            lines_2[2] == "- OM-050: Upcoming B (due: 2026-03-20)",
-            "Assignee '2' issue line formatting",
+            lines_two[2] == "- OM-050: Upcoming B (due: 2026-03-20)",
+            "Assignee fallback_two issue line formatting",
         )
-
-        # Assignee '10': overdue + upcoming => has blank line exactly once between headings
-        lines_10 = messages[2].splitlines()
-        # Expected layout:
-        # 0 Assignee: 10
-        # 1 Quá hạn:
-        # 2 - OM-100: Overdue A (due: 2026-03-19)
-        # 3 (blank)
-        # 4 Sắp đến hạn:
-        failures += _check(lines_10[0] == "Assignee: @fallback_ten", "Assignee '10' first line (@ user_name)")
-        failures += _check(lines_10[1] == "Quá hạn:", "Assignee '10' has Quá hạn heading")
-        failures += _check(lines_10[2] == "- OM-100: Overdue A (due: 2026-03-19)", "Assignee '10' overdue issue")
-        failures += _check(lines_10[3] == "", "Assignee '10' has exactly 1 blank line between sections")
-        failures += _check(lines_10[4] == "Sắp đến hạn:", "Assignee '10' has Sắp đến hạn heading")
-
-        # Upcoming ordering inside assignee '10':
-        # due 2026-03-20 (OM-099) -> 2026-03-22 (OM-102) -> 2026-03-23 (OM-101)
-        failures += _check(lines_10[5] == "- OM-099: Upcoming T (due: 2026-03-20)", "Upcoming sorting 1")
-        failures += _check(lines_10[6] == "- OM-102: Upcoming C (due: 2026-03-22)", "Upcoming sorting 2")
-        failures += _check(lines_10[7] == "- OM-101: Upcoming D (due: 2026-03-23)", "Upcoming sorting 3")
-        failures += _check("" not in lines_10[5:8], "No blank lines between issue lines (assignee '10')")
 
         # Unassigned: only overdue => no upcoming heading
         lines_u = messages[3].splitlines()

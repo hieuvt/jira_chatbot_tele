@@ -79,30 +79,39 @@ class FakeJiraClient:
         return [f"ATT-{i + 1}" for i in range(len(files))]
 
 
+def _fake_username_key(raw: str) -> str:
+    return str(raw).strip().lstrip("@").strip().lower()
+
+
 class FakeUsersStore:
-    """Bộ nhớ in-memory giả UsersStore (map telegram_id -> jira_id)."""
+    """Bộ nhớ in-memory giả UsersStore (map @username lowercase -> jira_id)."""
 
     def __init__(self, seed: dict[str, str] | None = None) -> None:
-        self._data = seed.copy() if seed else {}
+        self._data = {_fake_username_key(k): v for k, v in (seed or {}).items() if _fake_username_key(k)}
 
-    def get_jira_account_id(self, telegram_account_id: str) -> str | None:
-        value = self._data.get(telegram_account_id)
+    def get_jira_account_id(self, telegram_username: str) -> str | None:
+        key = _fake_username_key(telegram_username)
+        if not key:
+            return None
+        value = self._data.get(key)
         if not value:
             return None
         return value
 
     def upsert_mapping(
         self,
-        telegram_account_id: str,
+        telegram_username: str,
         jira_account_id: str,
         *,
-        user_name: str = "",
         telegram_display_name: str = "",
     ) -> bool:
-        _ = (user_name, telegram_display_name)
-        if telegram_account_id in self._data:
+        _ = telegram_display_name
+        key = _fake_username_key(telegram_username)
+        if not key:
             return False
-        self._data[telegram_account_id] = jira_account_id
+        if key in self._data:
+            return False
+        self._data[key] = jira_account_id
         return True
 
     def dump(self) -> dict[str, str]:
@@ -154,17 +163,51 @@ def build_state_machine(
     return machine, fake_jira, users_store
 
 
-def make_text(chat_id: int, user_id: int, text: str) -> MessageInput:
+def make_text(
+    chat_id: int,
+    user_id: int,
+    text: str,
+    *,
+    sender_username: str | None = None,
+) -> MessageInput:
     """Tin chỉ có text."""
-    return MessageInput(chat_id=chat_id, user_id=user_id, text=text)
+    return MessageInput(
+        chat_id=chat_id,
+        user_id=user_id,
+        text=text,
+        sender_username=sender_username,
+    )
 
 
-def make_reply(chat_id: int, user_id: int, reply_to_user_id: int, text: str = "") -> MessageInput:
+def make_reply(
+    chat_id: int,
+    user_id: int,
+    reply_to_user_id: int,
+    text: str = "",
+    *,
+    reply_to_username: str | None = None,
+    sender_username: str | None = None,
+) -> MessageInput:
     """Tin reply (giao việc chọn assignee)."""
-    return MessageInput(chat_id=chat_id, user_id=user_id, text=text, reply_to_user_id=reply_to_user_id)
+    return MessageInput(
+        chat_id=chat_id,
+        user_id=user_id,
+        text=text,
+        reply_to_user_id=reply_to_user_id,
+        reply_to_username=reply_to_username,
+        sender_username=sender_username,
+    )
 
 
-def make_attachment(chat_id: int, user_id: int, filename: str, size: int, content: bytes) -> MessageInput:
+def make_attachment(
+    chat_id: int,
+    user_id: int,
+    filename: str,
+    size: int,
+    content: bytes,
+    *,
+    sender_username: str | None = None,
+) -> MessageInput:
     """Tin có một file đính kèm giả."""
     payload = FileMeta(
         filename=filename,
@@ -175,4 +218,10 @@ def make_attachment(chat_id: int, user_id: int, filename: str, size: int, conten
         mime_type="text/plain",
         content_bytes=content,
     )
-    return MessageInput(chat_id=chat_id, user_id=user_id, attachments=[payload], text=None)
+    return MessageInput(
+        chat_id=chat_id,
+        user_id=user_id,
+        attachments=[payload],
+        text=None,
+        sender_username=sender_username,
+    )

@@ -70,9 +70,10 @@ class MessageInput:
     user_id: int
     text: str | None = None
     reply_to_user_id: int | None = None
-    reply_to_username: str | None = None
+    reply_to_username: str | None = None  # lowercase, không @ — khớp users.json
     mentioned_user_id: int | None = None
-    mentioned_username: str | None = None
+    mentioned_username: str | None = None  # lowercase — khớp users.json
+    sender_username: str | None = None  # @username Telegram chuẩn hoá; None = không persist/tra store
     sender_user_name: str | None = None
     sender_telegram_display_name: str | None = None
     reply_target_user_name: str | None = None
@@ -96,9 +97,11 @@ class ConversationBuffer:
     sender_jira_account_id: str | None = None
     assignee_jira_account_id: str | None = None
     assignee_telegram_display: str | None = None
+    sender_username: str | None = None
+    pending_assignee_awaiting_jira: bool = False
+    pending_assignee_username: str | None = None  # để upsert sau khi nhập jira (username-only store)
     pending_assignee_telegram_user_id: int | None = None
     pending_assignee_telegram_display: str | None = None
-    pending_assignee_user_name: str | None = None
     pending_assignee_telegram_display_name: str | None = None
     summary: str | None = None
     description: str | None = None
@@ -181,6 +184,7 @@ class ConversationStateMachine:
                 chat_id=message.chat_id,
                 user_id=message.user_id,
                 state=ConversationState.S0_START_ASSIGN,
+                sender_username=message.sender_username,
             )
         else:
             buffer = ConversationBuffer(
@@ -188,6 +192,7 @@ class ConversationStateMachine:
                 chat_id=message.chat_id,
                 user_id=message.user_id,
                 state=ConversationState.S0_START_MY_TASK,
+                sender_username=message.sender_username,
             )
         key = (message.chat_id, message.user_id)
         self._sessions[key] = buffer
@@ -217,7 +222,11 @@ class ConversationStateMachine:
         """Vòng lặp: kiểm tra mapping, member Jira, admin (giao việc), assignee — tới bước cần hỏi hoặc tạo issue."""
         while True:
             if buffer.state in {ConversationState.S0_START_ASSIGN, ConversationState.S0_START_MY_TASK}:
-                sender = self._users_store.get_jira_account_id(str(buffer.user_id))
+                sender = (
+                    self._users_store.get_jira_account_id(buffer.sender_username)
+                    if buffer.sender_username
+                    else None
+                )
                 if sender:
                     buffer.sender_jira_account_id = sender
                     buffer.state = ConversationState.S2_CHECK_SENDER_MEMBER
@@ -289,12 +298,12 @@ class ConversationStateMachine:
         if message.has_media or not message.text or not message.text.strip():
             return self._tpl("TPL_ASK_SENDER_JIRA_ID")
         jira_account_id = message.text.strip()
-        self._users_store.upsert_mapping(
-            str(buffer.user_id),
-            jira_account_id,
-            user_name=message.sender_user_name or str(buffer.user_id),
-            telegram_display_name=message.sender_telegram_display_name or "",
-        )
+        if message.sender_username:
+            self._users_store.upsert_mapping(
+                message.sender_username,
+                jira_account_id,
+                telegram_display_name=message.sender_telegram_display_name or "",
+            )
         buffer.sender_jira_account_id = jira_account_id
         buffer.state = ConversationState.S2_CHECK_SENDER_MEMBER
         return self._run_non_interactive_states(buffer=buffer, key=key)
@@ -309,82 +318,90 @@ class ConversationStateMachine:
                 return ""
             return str(user_id)
 
-        if buffer.pending_assignee_telegram_user_id and message.text and message.text.strip() and not message.has_media:
-            pending_user_id = buffer.pending_assignee_telegram_user_id
-            pending_display = buffer.pending_assignee_telegram_display
-            jira_account_id = message.text.strip()
-            self._users_store.upsert_mapping(
-                str(pending_user_id),
-                jira_account_id,
-                user_name=buffer.pending_assignee_user_name or str(pending_user_id),
-                telegram_display_name=buffer.pending_assignee_telegram_display_name or "",
-            )
+        def _clear_pending_assignee(buffer: ConversationBuffer) -> None:
+            buffer.pending_assignee_awaiting_jira = False
+            buffer.pending_assignee_username = None
             buffer.pending_assignee_telegram_user_id = None
-            buffer.assignee_telegram_display = pending_display or str(pending_user_id)
             buffer.pending_assignee_telegram_display = None
-            buffer.pending_assignee_user_name = None
             buffer.pending_assignee_telegram_display_name = None
+
+        if buffer.pending_assignee_awaiting_jira and message.text and message.text.strip() and not message.has_media:
+            pending_display = buffer.pending_assignee_telegram_display
+            pending_uid = buffer.pending_assignee_telegram_user_id
+            jira_account_id = message.text.strip()
+            if buffer.pending_assignee_username or buffer.pending_assignee_telegram_display_name:
+                self._users_store.upsert_mapping(
+                    buffer.pending_assignee_username or buffer.pending_assignee_telegram_display_name,
+                    jira_account_id,
+                    telegram_display_name=buffer.pending_assignee_telegram_display_name or "",
+                )
+            _clear_pending_assignee(buffer)
+            buffer.assignee_telegram_display = pending_display or (str(pending_uid) if pending_uid else None)
             buffer.assignee_jira_account_id = jira_account_id
             buffer.state = ConversationState.S5_CHECK_ASSIGNEE_MEMBER
             return self._run_non_interactive_states(buffer=buffer, key=key)
 
-        
-        if message.mentioned_user_id:
-            mapped = self._users_store.get_jira_account_id(str(message.mentioned_user_id))
+        if message.mentioned_username:
+            mapped = self._users_store.get_jira_account_id(message.mentioned_username)
             if mapped:
                 buffer.assignee_jira_account_id = mapped
                 buffer.assignee_telegram_display = _to_telegram_display(
-                    username=message.mentioned_user_name,
+                    username=message.mentioned_username,
                     user_id=message.mentioned_user_id,
                 )
                 buffer.state = ConversationState.S5_CHECK_ASSIGNEE_MEMBER
                 return self._run_non_interactive_states(buffer=buffer, key=key)
+            buffer.pending_assignee_awaiting_jira = True
+            buffer.pending_assignee_username = message.mentioned_username
             buffer.pending_assignee_telegram_user_id = message.mentioned_user_id
             buffer.pending_assignee_telegram_display = _to_telegram_display(
                 username=message.mentioned_username,
                 user_id=message.mentioned_user_id,
             )
-            buffer.pending_assignee_user_name = message.mentioned_user_name or str(message.mentioned_user_id)
             buffer.pending_assignee_telegram_display_name = message.mentioned_telegram_display_name or ""
             return self._tpl("TPL_ASK_ASSIGNEE")
-        if message.mentioned_user_name:
-            mapped = self._users_store.get_jira_account_id(str(message.mentioned_user_name))
-            if mapped:
-                buffer.assignee_jira_account_id = mapped
-                # Ưu tiên @username/id từ tin nhắn so với target ForceReply (tin bot)
-                buffer.assignee_telegram_display = _to_telegram_display(
-                    username=message.mentioned_username,
-                    user_id=message.mentioned_user_id or message.reply_to_user_id,
-                )
-                buffer.state = ConversationState.S5_CHECK_ASSIGNEE_MEMBER
-                return self._run_non_interactive_states(buffer=buffer, key=key)
-            buffer.pending_assignee_telegram_user_id = message.mentioned_user_id or message.reply_to_user_id
+
+        if message.mentioned_user_id:
+            buffer.pending_assignee_awaiting_jira = True
+            buffer.pending_assignee_username = None
+            buffer.pending_assignee_telegram_user_id = message.mentioned_user_id
             buffer.pending_assignee_telegram_display = _to_telegram_display(
                 username=message.mentioned_user_name,
-                user_id=message.mentioned_user_id or message.reply_to_user_id,
+                user_id=message.mentioned_user_id,
             )
-            buffer.pending_assignee_user_name = message.mentioned_user_name or ""
-            buffer.pending_assignee_telegram_display_name = message.mentioned_telegram_display_name or message.mentioned_user_name or ""
+            buffer.pending_assignee_telegram_display_name = message.mentioned_telegram_display_name or ""
             return self._tpl("TPL_ASK_ASSIGNEE")
-        
+
         # Reply tin nhắn của assignee (ForceReply trong nhóm)
-        if message.reply_to_user_id:
-            mapped = self._users_store.get_jira_account_id(str(message.reply_to_user_id))
+        if message.reply_to_username:
+            mapped = self._users_store.get_jira_account_id(message.reply_to_username)
             if mapped:
                 buffer.assignee_jira_account_id = mapped
-                buffer.assignee_telegram_display = (
-                    _to_telegram_display(username=message.mentioned_username, user_id=message.mentioned_user_id)
-                    or _to_telegram_display(username=message.reply_to_username, user_id=message.reply_to_user_id)
+                buffer.assignee_telegram_display = _to_telegram_display(
+                    username=message.reply_to_username,
+                    user_id=message.reply_to_user_id,
                 )
                 buffer.state = ConversationState.S5_CHECK_ASSIGNEE_MEMBER
                 return self._run_non_interactive_states(buffer=buffer, key=key)
+            buffer.pending_assignee_awaiting_jira = True
+            buffer.pending_assignee_username = message.reply_to_username
             buffer.pending_assignee_telegram_user_id = message.reply_to_user_id
             buffer.pending_assignee_telegram_display = _to_telegram_display(
-                username=message.mentioned_user_name,
+                username=message.reply_to_username,
                 user_id=message.reply_to_user_id,
             )
-            buffer.pending_assignee_user_name = message.mentioned_user_name or str(message.reply_to_user_id)
-            buffer.pending_assignee_telegram_display_name = message.mentioned_telegram_display_name or message.mentioned_user_name or ""
+            buffer.pending_assignee_telegram_display_name = message.reply_target_telegram_display_name or ""
+            return self._tpl("TPL_ASK_ASSIGNEE")
+
+        if message.reply_to_user_id:
+            buffer.pending_assignee_awaiting_jira = True
+            buffer.pending_assignee_username = None
+            buffer.pending_assignee_telegram_user_id = message.reply_to_user_id
+            buffer.pending_assignee_telegram_display = _to_telegram_display(
+                username=message.reply_to_username,
+                user_id=message.reply_to_user_id,
+            )
+            buffer.pending_assignee_telegram_display_name = message.reply_target_telegram_display_name or ""
             return self._tpl("TPL_ASK_ASSIGNEE")
 
         if message.has_media or not message.text or not message.text.strip():
@@ -393,20 +410,17 @@ class ConversationStateMachine:
                 "Nếu không, bạn có thể nhập trực tiếp jira_account_id."
             )
         jira_account_id = message.text.strip()
-        if buffer.pending_assignee_telegram_user_id:
-            pending_user_id = buffer.pending_assignee_telegram_user_id
+        if buffer.pending_assignee_awaiting_jira:
             pending_display = buffer.pending_assignee_telegram_display
-            self._users_store.upsert_mapping(
-                str(pending_user_id),
-                jira_account_id,
-                user_name=buffer.pending_assignee_user_name or str(pending_user_id),
-                telegram_display_name=buffer.pending_assignee_telegram_display_name or "",
-            )
-            buffer.pending_assignee_telegram_user_id = None
-            buffer.assignee_telegram_display = pending_display or str(pending_user_id)
-            buffer.pending_assignee_telegram_display = None
-            buffer.pending_assignee_user_name = None
-            buffer.pending_assignee_telegram_display_name = None
+            pending_uid = buffer.pending_assignee_telegram_user_id
+            if buffer.pending_assignee_username:
+                self._users_store.upsert_mapping(
+                    buffer.pending_assignee_username,
+                    jira_account_id,
+                    telegram_display_name=buffer.pending_assignee_telegram_display_name or "",
+                )
+            _clear_pending_assignee(buffer)
+            buffer.assignee_telegram_display = pending_display or (str(pending_uid) if pending_uid else None)
         else:
             # User nhập trực tiếp `jira_account_id` (không có mention/reply), nên giữ hiển thị theo jira.
             buffer.assignee_telegram_display = None
