@@ -31,6 +31,15 @@ from src.conversation.validators import (
 from src.jira.models import AttachmentMeta, IssueCreateRequest, SubtaskCreateRequest
 
 
+def _telegram_id_for_assignee_store(*, pending_uid: int | None, bot_user_id: int | None) -> str:
+    """Chuỗi lưu users.json cho assignee; trống nếu không có id hoặc id là bot."""
+    if pending_uid is None:
+        return ""
+    if bot_user_id is not None and pending_uid == bot_user_id:
+        return ""
+    return str(pending_uid)
+
+
 # --- Các trạng thái FSM (bước hỏi / kiểm tra Jira) ---
 
 
@@ -80,6 +89,7 @@ class MessageInput:
     reply_target_telegram_display_name: str | None = None
     mentioned_user_name: str | None = None
     mentioned_telegram_display_name: str | None = None
+    bot_user_id: int | None = None
     attachments: list[FileMeta] = field(default_factory=list)
 
     @property
@@ -303,6 +313,7 @@ class ConversationStateMachine:
                 message.sender_username,
                 jira_account_id,
                 telegram_display_name=message.sender_telegram_display_name or "",
+                telegram_id=str(message.user_id),
             )
         buffer.sender_jira_account_id = jira_account_id
         buffer.state = ConversationState.S2_CHECK_SENDER_MEMBER
@@ -334,6 +345,10 @@ class ConversationStateMachine:
                     buffer.pending_assignee_username or buffer.pending_assignee_telegram_display_name,
                     jira_account_id,
                     telegram_display_name=buffer.pending_assignee_telegram_display_name or "",
+                    telegram_id=_telegram_id_for_assignee_store(
+                        pending_uid=pending_uid,
+                        bot_user_id=message.bot_user_id,
+                    ),
                 )
             _clear_pending_assignee(buffer)
             buffer.assignee_telegram_display = pending_display or (str(pending_uid) if pending_uid else None)
@@ -418,6 +433,10 @@ class ConversationStateMachine:
                     buffer.pending_assignee_username,
                     jira_account_id,
                     telegram_display_name=buffer.pending_assignee_telegram_display_name or "",
+                    telegram_id=_telegram_id_for_assignee_store(
+                        pending_uid=pending_uid,
+                        bot_user_id=message.bot_user_id,
+                    ),
                 )
             _clear_pending_assignee(buffer)
             buffer.assignee_telegram_display = pending_display or (str(pending_uid) if pending_uid else None)

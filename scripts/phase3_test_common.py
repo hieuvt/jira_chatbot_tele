@@ -104,8 +104,10 @@ class FakeUsersStore:
         jira_account_id: str,
         *,
         telegram_display_name: str = "",
+        telegram_id: str = "",
     ) -> bool:
         _ = telegram_display_name
+        _ = telegram_id
         key = _fake_username_key(telegram_username)
         if not key:
             return False

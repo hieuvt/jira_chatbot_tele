@@ -96,11 +96,13 @@ class UsersStore:
         jira_account_id: str,
         *,
         telegram_display_name: str = "",
+        telegram_id: str = "",
     ) -> bool:
         """
         Thêm hoặc (khi jira_id cũ invalid) ghi đè mapping. Trả True nếu đã ghi mới/đổi.
         Không ghi đè jira_id hợp lệ đã có cho cùng @username.
         telegram_username rỗng sau chuẩn hoá => no-op (user không có @username).
+        `telegram_id` chỉ lưu trên đĩa (users.json), không dùng cho tra cứu trong store.
         """
         username_key = _normalize_username_key(telegram_username)
         if not username_key:
@@ -111,6 +113,7 @@ class UsersStore:
             return False
 
         display_stored = str(telegram_display_name).strip() if telegram_display_name is not None else ""
+        tid_stored = str(telegram_id).strip() if telegram_id is not None else ""
 
         try:
             with self._acquire_lock():
@@ -123,6 +126,7 @@ class UsersStore:
 
                 new_rec = {
                     "user_name": username_key,
+                    "telegram_id": tid_stored,
                     "telegram_display_name": display_stored,
                     "jira_id": jira_value,
                 }
@@ -185,9 +189,12 @@ class UsersStore:
                 continue
             if not isinstance(jira_raw, str) or not jira_raw.strip():
                 continue
+            tid_raw = rec.get("telegram_id")
+            tid_s = str(tid_raw).strip() if tid_raw is not None else ""
             normalized.append(
                 {
                     "user_name": uname,
+                    "telegram_id": tid_s,
                     "telegram_display_name": str(rec.get("telegram_display_name", "")).strip(),
                     "jira_id": jira_raw.strip(),
                 }
@@ -300,6 +307,7 @@ def _legacy_dict_to_records(content: dict[Any, Any]) -> list[dict[str, str]]:
         out.append(
             {
                 "user_name": _normalize_username_key(tid),
+                "telegram_id": "",
                 "telegram_display_name": "",
                 "jira_id": jira_s,
             }
@@ -308,7 +316,7 @@ def _legacy_dict_to_records(content: dict[Any, Any]) -> list[dict[str, str]]:
 
 
 def _normalize_record_list(content: list[Any]) -> list[dict[str, str]]:
-    """Chuẩn hoá phần tử list object từ JSON thành dict đồng nhất (không còn telegram_id trên đĩa)."""
+    """Chuẩn hoá phần tử list object từ JSON thành dict đồng nhất (giữ `telegram_id` nếu có)."""
     out: list[dict[str, str]] = []
     for item in content:
         if not isinstance(item, dict):
@@ -316,9 +324,10 @@ def _normalize_record_list(content: list[Any]) -> list[dict[str, str]]:
         un_raw = item.get("user_name")
         user_part = str(un_raw).strip() if isinstance(un_raw, str) else ""
         tid_raw = item.get("telegram_id")
-        tid_part = str(tid_raw).strip() if tid_raw is not None and str(tid_raw).strip() else ""
+        tid_for_key = str(tid_raw).strip() if tid_raw is not None and str(tid_raw).strip() else ""
+        tid_stored = str(tid_raw).strip() if tid_raw is not None else ""
 
-        key = _normalize_username_key(user_part) if user_part else _normalize_username_key(tid_part)
+        key = _normalize_username_key(user_part) if user_part else _normalize_username_key(tid_for_key)
         if not key:
             continue
 
@@ -331,6 +340,7 @@ def _normalize_record_list(content: list[Any]) -> list[dict[str, str]]:
         out.append(
             {
                 "user_name": key,
+                "telegram_id": tid_stored,
                 "telegram_display_name": display_name,
                 "jira_id": jira_s,
             }

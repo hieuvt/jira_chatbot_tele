@@ -273,6 +273,7 @@ def register_handlers(
         message_input = MessageInput(
             chat_id=update.effective_chat.id,
             user_id=update.effective_user.id,
+            bot_user_id=getattr(context.bot, "id", None),
             text=tg_message.text or tg_message.caption,
             reply_to_user_id=(
                 tg_message.reply_to_message.from_user.id if tg_message.reply_to_message else None

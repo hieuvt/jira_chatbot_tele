@@ -42,6 +42,19 @@ def _jira_for_username(content: Any, username: str) -> str | None:
     return None
 
 
+def _record_for_username(content: Any, username: str) -> dict[str, Any] | None:
+    if not isinstance(content, list):
+        return None
+    key = str(username).strip().lstrip("@").strip().lower()
+    for rec in content:
+        if not isinstance(rec, dict):
+            continue
+        un = str(rec.get("user_name", "")).strip().lower()
+        if un == key:
+            return rec
+    return None
+
+
 def test_get_jira_account_id_empty_and_invalid() -> int:
     failures = 0
     with tempfile.TemporaryDirectory() as d:
@@ -76,11 +89,24 @@ def test_upsert_validation_and_no_overwrite_valid() -> int:
             "alice",
             "jira-1",
             telegram_display_name="Alice A",
+            telegram_id="111",
         )
         failures += _check(added, "upsert: add when key missing => added=true")
         failures += _check(p.exists(), "upsert: creates users.json when valid input")
         failures += _check(store.get_jira_account_id("alice") == "jira-1", "get after add => stored mapping")
         failures += _check(store.get_jira_account_id("Alice") == "jira-1", "get case-insensitive username")
+
+        content_alice = json.loads(p.read_text(encoding="utf-8"))
+        rec_alice = _record_for_username(content_alice, "alice")
+        failures += _check(
+            isinstance(rec_alice, dict) and rec_alice.get("telegram_id") == "111",
+            "upsert: telegram_id persisted on disk",
+        )
+        rec_api = store.get_user_record_by_user_name("alice")
+        failures += _check(
+            rec_api is not None and "telegram_id" not in rec_api,
+            "get_user_record_by_user_name: does not expose telegram_id",
+        )
 
         added2 = store.upsert_mapping("alice", "jira-2", telegram_display_name="Alice A")
         failures += _check(not added2, "upsert: existing valid mapping => added=false")
@@ -126,6 +152,11 @@ def test_upsert_resilience_invalid_json_and_atomicity() -> int:
             content = None
         failures += _check(isinstance(content, list), "upsert: users.json after write is valid JSON array")
         failures += _check(_jira_for_username(content, "bob") == "jira-1", "upsert: mapping exists after recover")
+        rec_bob = _record_for_username(content, "bob")
+        failures += _check(
+            isinstance(rec_bob, dict) and rec_bob.get("telegram_id", "") == "",
+            "upsert: default telegram_id empty string on disk",
+        )
 
         tmp_path = p.with_name(f"{p.name}.tmp")
         failures += _check(not tmp_path.exists(), "upsert: tmp file should not remain after success")
