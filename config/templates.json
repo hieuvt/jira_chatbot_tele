@@ -9,11 +9,16 @@
       ],
       "MY_TASK": [
         "/vieccuatoi"
+      ],
+      "HELP": [
+        "/huongdan",
+        "/help"
       ]
     }
   },
   "bot_replies": {
-    "TPL_UNKNOWN_INTENT": "Mình chưa hiểu yêu cầu. Bạn hãy nhập đúng 1 trong 3 lệnh: \"/giaoviec\", \"/giaochotoi\" hoặc \"/vieccuatoi\".",
+    "TPL_UNKNOWN_INTENT": "Mình chưa hiểu yêu cầu. Bạn hãy nhập đúng 1 trong các lệnh: \"/giaoviec\", \"/giaochotoi\", \"/vieccuatoi\", \"/huongdan\" hoặc \"/help\".",
+    "TPL_HELP": "Đây là bot hỗ trợ quản lý công việc. Điều kiện sử dụng:\n- Team phải setup trước project trên jira\n- Các thành viên trong nhóm chat là thành viên project trên jira\n\nBạn có thể dùng các chức năng sau:\n/giaoviec : dùng cho manager giao việc cho các thành viên\n/giaochotoi: thành viên tự note task cho chính mình\n/vieccuatoi: thành viên tự kiểm tra danhh sách công việc của chính mình\n/huy: khi note việc không đúng nội dung, dùng chức năng này để rollback\n\n\nNgoài ra, hàng ngày bot sẽ tự động gửi tóm tắt danh sách công việc của các thành viên vào khung giờ cố định",
     "TPL_ASK_SENDER_JIRA_ID": "Bạn chưa liên kết Jira. Vui lòng nhập jira_account_id của bạn.",
     "TPL_NOT_PROJECT_MEMBER": "Bạn chưa là thành viên của project trên Jira. Vui lòng kiểm tra lại quyền trước khi dùng bot.",
     "TPL_NOT_ADMIN_ASSIGN": "Chỉ Admin của project mới có quyền giao việc.",

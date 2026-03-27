@@ -14,6 +14,7 @@ if str(_project_root) not in sys.path:
     sys.path.insert(0, str(_project_root))
 
 import mimetypes
+import html
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
 from enum import Enum
@@ -44,6 +45,9 @@ def _telegram_id_for_assignee_store(*, pending_uid: int | None, bot_user_id: int
     if bot_user_id is not None and pending_uid == bot_user_id:
         return ""
     return str(pending_uid)
+
+
+HTML_OUTPUT_PREFIX = "__HTML__:"
 
 
 # --- Các trạng thái FSM (bước hỏi / kiểm tra Jira) ---
@@ -186,6 +190,8 @@ class ConversationStateMachine:
 
         if existing:
             route = resolve_intent(message.text or "", intent_aliases=self._intent_aliases)
+            if route.intent == Intent.HELP:
+                return self._tpl("TPL_HELP")
             if route.intent in {Intent.ASSIGN_TASK, Intent.ASSIGN_TASK_SELF, Intent.MY_TASK}:
                 self._end_session(key)
                 return self._start_new_session(message=message, intent=route.intent)
@@ -193,6 +199,8 @@ class ConversationStateMachine:
             return self._handle_existing(buffer=existing, message=message, key=key)
 
         route = resolve_intent(message.text or "", intent_aliases=self._intent_aliases)
+        if route.intent == Intent.HELP:
+            return self._tpl("TPL_HELP")
         if route.intent == Intent.UNKNOWN:
             return self._tpl("TPL_UNKNOWN_INTENT")
         return self._start_new_session(message=message, intent=route.intent)
@@ -582,6 +590,18 @@ class ConversationStateMachine:
     def _query_my_tasks(self, *, buffer: ConversationBuffer, key: tuple[int, int]) -> str:
         """Query Jira theo assignee = sender và render tin tổng hợp overdue/upcoming/done recent."""
         assert buffer.sender_jira_account_id
+        jira_base_url = str(getattr(self._jira_client, "base_url", "") or "").rstrip("/")
+
+        def _issue_line(*, issue_key: str, summary: str, due_text: str | None = None) -> str:
+            escaped_key = html.escape(issue_key)
+            escaped_summary = html.escape(summary)
+            if jira_base_url:
+                issue_part = f'<a href="{html.escape(f"{jira_base_url}/browse/{issue_key}", quote=True)}">{escaped_key}</a>'
+            else:
+                issue_part = escaped_key
+            suffix = f" (due: {due_text})" if due_text else ""
+            return f"- {issue_part}: {escaped_summary}{suffix}"
+
         now = datetime.now(timezone.utc)
         due_query = QueryIssuesRequest(
             project_key=self._config.project_key,
@@ -619,7 +639,7 @@ class ConversationStateMachine:
                 due_value = date.fromisoformat(record.due_date)
             except ValueError:
                 continue
-            line = f"- {record.issue_key}: {record.summary} (due: {due_value.isoformat()})"
+            line = _issue_line(issue_key=record.issue_key, summary=record.summary, due_text=due_value.isoformat())
             if due_value < today:
                 overdue_lines.append(line)
             elif due_value <= due_upper:
@@ -627,7 +647,7 @@ class ConversationStateMachine:
 
         done_lines: list[str] = []
         for record in done_items:
-            done_lines.append(f"- {record.issue_key}: {record.summary}")
+            done_lines.append(_issue_line(issue_key=record.issue_key, summary=record.summary))
 
         header = (
             f"Việc của bạn trong project {self._config.project_key}:\n"
@@ -648,7 +668,7 @@ class ConversationStateMachine:
         if not overdue_lines and not upcoming_lines and not done_lines:
             sections.append("Hiện không có công việc quá hạn, sắp đến hạn hoặc vừa hoàn thành.")
         self._end_session(key)
-        return "\n\n".join(sections)
+        return f"{HTML_OUTPUT_PREFIX}{'\n\n'.join(sections)}"
 
     def _create_jira_issue(self, *, buffer: ConversationBuffer, key: tuple[int, int]) -> str:
         """Gọi Jira: issue chính, sub-task checklist, upload file; kết thúc phiên."""
