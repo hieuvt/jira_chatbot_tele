@@ -95,6 +95,9 @@ def bootstrap_app() -> dict[str, Any]:
             attachment_max_files=int(attachments_cfg.get("max_files", 10)),
             attachment_max_total_bytes=20 * 1024 * 1024,
             attachment_max_bytes=int(jira.get("attachment_max_bytes", 10 * 1024 * 1024)),
+            my_task_window_days=window_days,
+            my_task_completed_lookback_hours=completed_lookback_hours,
+            my_task_completed_status_names=[str(x).strip() for x in completed_status_names if str(x).strip()],
         ),
     )
 

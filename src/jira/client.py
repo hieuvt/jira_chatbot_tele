@@ -175,11 +175,16 @@ class JiraClient:
         self, query: QueryIssuesRequest
     ) -> dict[str, list[JiraIssueRecord]]:
         end_time = query.now + timedelta(days=query.window_days)
-        jql = (
+        jql_parts = [
             f'project = "{query.project_key}" '
             f'AND duedate IS NOT EMPTY '
             f'AND duedate <= "{end_time.strftime("%Y-%m-%d")}"'
-        )
+        ]
+        assignee_account_id = (query.assignee_account_id or "").strip()
+        if assignee_account_id:
+            escaped_assignee = assignee_account_id.replace("\\", "\\\\").replace('"', '\\"')
+            jql_parts.append(f'AND assignee = "{escaped_assignee}"')
+        jql = " ".join(jql_parts)
         grouped: dict[str, list[JiraIssueRecord]] = {}
         start_at = 0
         for _ in range(query.max_pages):
@@ -253,7 +258,12 @@ class JiraClient:
             escaped = name.replace("\\", "\\\\").replace('"', '\\"')
             status_clauses.append(f'status CHANGED TO "{escaped}" DURING {during}')
         status_expr = status_clauses[0] if len(status_clauses) == 1 else "(" + " OR ".join(status_clauses) + ")"
-        return f'project = "{query.project_key}" AND statusCategory = Done AND {status_expr}'
+        base_jql = f'project = "{query.project_key}" AND statusCategory = Done AND {status_expr}'
+        assignee_account_id = (query.assignee_account_id or "").strip()
+        if not assignee_account_id:
+            return base_jql
+        escaped_assignee = assignee_account_id.replace("\\", "\\\\").replace('"', '\\"')
+        return f'{base_jql} AND assignee = "{escaped_assignee}"'
 
     # --- Nội bộ: quyền bot, role actors, HTTP, lỗi, ADF, multipart ---
 

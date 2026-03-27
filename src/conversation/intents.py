@@ -10,6 +10,7 @@ class Intent(str, Enum):
     """Các intent hội thoại được hỗ trợ."""
 
     ASSIGN_TASK = "ASSIGN_TASK"
+    ASSIGN_TASK_SELF = "ASSIGN_TASK_SELF"
     MY_TASK = "MY_TASK"
     UNKNOWN = "UNKNOWN"
 
@@ -25,6 +26,7 @@ class IntentResult:
 # Alias mặc định khi không có `templates.json`; có thể bị ghi đè bởi cấu hình JSON
 DEFAULT_INTENT_ALIASES: dict[Intent, list[str]] = {
     Intent.ASSIGN_TASK: ["/giaoviec"],
+    Intent.ASSIGN_TASK_SELF: ["/giaochotoi"],
     Intent.MY_TASK: ["/vieccuatoi"],
 }
 

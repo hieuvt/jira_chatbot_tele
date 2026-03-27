@@ -44,6 +44,7 @@ class QueryIssuesRequest:
     reporter_account_id: str  # Giữ field theo contract; JQL Phase 5 không lọc reporter
     window_days: int
     now: datetime
+    assignee_account_id: str | None = None
     max_results: int = 50
     max_pages: int = 20
 
@@ -54,6 +55,7 @@ class QueryRecentlyCompletedRequest:
 
     project_key: str
     now: datetime
+    assignee_account_id: str | None = None
     lookback_hours: int = 24
     completed_status_names: list[str] = field(default_factory=lambda: ["Done"])
     max_results: int = 50

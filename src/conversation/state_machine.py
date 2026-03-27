@@ -15,7 +15,7 @@ if str(_project_root) not in sys.path:
 
 import mimetypes
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from enum import Enum
 
 from src.common.errors import JiraClientError
@@ -28,7 +28,13 @@ from src.conversation.validators import (
     parse_due_days,
     split_checklist_lines,
 )
-from src.jira.models import AttachmentMeta, IssueCreateRequest, SubtaskCreateRequest
+from src.jira.models import (
+    AttachmentMeta,
+    IssueCreateRequest,
+    QueryIssuesRequest,
+    QueryRecentlyCompletedRequest,
+    SubtaskCreateRequest,
+)
 
 
 def _telegram_id_for_assignee_store(*, pending_uid: int | None, bot_user_id: int | None) -> str:
@@ -45,6 +51,7 @@ def _telegram_id_for_assignee_store(*, pending_uid: int | None, bot_user_id: int
 
 class ConversationState(str, Enum):
     S0_START_ASSIGN = "S0_START_ASSIGN"
+    S0_START_ASSIGN_SELF = "S0_START_ASSIGN_SELF"
     S0_START_MY_TASK = "S0_START_MY_TASK"
     S1_ASK_SENDER_JIRA_ID = "S1_ASK_SENDER_JIRA_ID"
     S2_CHECK_SENDER_MEMBER = "S2_CHECK_SENDER_MEMBER"
@@ -58,6 +65,7 @@ class ConversationState(str, Enum):
     S10_ASK_DUE_DAYS = "S10_ASK_DUE_DAYS"
     S11_CONFIRM = "S11_CONFIRM"
     S12_CREATE = "S12_CREATE"
+    S13_QUERY_MY_TASK = "S13_QUERY_MY_TASK"
 
 
 @dataclass
@@ -140,6 +148,9 @@ class StateMachineConfig:
     attachment_max_files: int = 10
     attachment_max_total_bytes: int = 20 * 1024 * 1024
     attachment_max_bytes: int | None = None
+    my_task_window_days: int = 3
+    my_task_completed_lookback_hours: int = 24
+    my_task_completed_status_names: list[str] = field(default_factory=lambda: ["Done"])
 
 
 class ConversationStateMachine:
@@ -175,7 +186,7 @@ class ConversationStateMachine:
 
         if existing:
             route = resolve_intent(message.text or "", intent_aliases=self._intent_aliases)
-            if route.intent in {Intent.ASSIGN_TASK, Intent.MY_TASK}:
+            if route.intent in {Intent.ASSIGN_TASK, Intent.ASSIGN_TASK_SELF, Intent.MY_TASK}:
                 self._end_session(key)
                 return self._start_new_session(message=message, intent=route.intent)
             existing.touch()
@@ -194,6 +205,14 @@ class ConversationStateMachine:
                 chat_id=message.chat_id,
                 user_id=message.user_id,
                 state=ConversationState.S0_START_ASSIGN,
+                sender_username=message.sender_username,
+            )
+        elif intent == Intent.ASSIGN_TASK_SELF:
+            buffer = ConversationBuffer(
+                intent=intent,
+                chat_id=message.chat_id,
+                user_id=message.user_id,
+                state=ConversationState.S0_START_ASSIGN_SELF,
                 sender_username=message.sender_username,
             )
         else:
@@ -231,12 +250,16 @@ class ConversationStateMachine:
     def _run_non_interactive_states(self, *, buffer: ConversationBuffer, key: tuple[int, int]) -> str:
         """Vòng lặp: kiểm tra mapping, member Jira, admin (giao việc), assignee — tới bước cần hỏi hoặc tạo issue."""
         while True:
-            if buffer.state in {ConversationState.S0_START_ASSIGN, ConversationState.S0_START_MY_TASK}:
-                sender = (
-                    self._users_store.get_jira_account_id_by_username(buffer.sender_username)
-                    if buffer.sender_username
-                    else None
-                )
+            if buffer.state in {
+                ConversationState.S0_START_ASSIGN,
+                ConversationState.S0_START_ASSIGN_SELF,
+                ConversationState.S0_START_MY_TASK,
+            }:
+                sender = None
+                if buffer.sender_username:
+                    sender = self._users_store.get_jira_account_id_by_username(buffer.sender_username)
+                if not sender:
+                    sender = self._users_store.get_jira_account_id_by_userid(buffer.user_id)
                 if sender:
                     buffer.sender_jira_account_id = sender
                     buffer.state = ConversationState.S2_CHECK_SENDER_MEMBER
@@ -255,8 +278,19 @@ class ConversationStateMachine:
                     return self._map_jira_error(exc)
                 if not is_member:
                     self._end_session(key)
+                    if buffer.intent == Intent.MY_TASK:
+                        return self._tpl("TPL_ASSIGNEE_NOT_MEMBER")
                     return self._tpl("TPL_NOT_PROJECT_MEMBER")
                 if buffer.intent == Intent.MY_TASK:
+                    if buffer.sender_username:
+                        self._users_store.upsert_mapping(
+                            buffer.sender_username,
+                            buffer.sender_jira_account_id,
+                            telegram_id=str(buffer.user_id),
+                        )
+                    buffer.state = ConversationState.S13_QUERY_MY_TASK
+                    continue
+                if buffer.intent == Intent.ASSIGN_TASK_SELF:
                     buffer.assignee_jira_account_id = buffer.sender_jira_account_id
                     buffer.state = ConversationState.S6_ASK_SUMMARY
                     return self._tpl("TPL_ASK_SUMMARY")
@@ -298,6 +332,8 @@ class ConversationStateMachine:
 
             if buffer.state == ConversationState.S12_CREATE:
                 return self._create_jira_issue(buffer=buffer, key=key)
+            if buffer.state == ConversationState.S13_QUERY_MY_TASK:
+                return self._query_my_tasks(buffer=buffer, key=key)
 
             return self._tpl("TPL_UNKNOWN_INTENT")
 
@@ -542,6 +578,77 @@ class ConversationStateMachine:
             self._end_session(key)
             return self._tpl("TPL_CANCELLED")
         return self._tpl("TPL_INVALID_CONFIRM")
+
+    def _query_my_tasks(self, *, buffer: ConversationBuffer, key: tuple[int, int]) -> str:
+        """Query Jira theo assignee = sender và render tin tổng hợp overdue/upcoming/done recent."""
+        assert buffer.sender_jira_account_id
+        now = datetime.now(timezone.utc)
+        due_query = QueryIssuesRequest(
+            project_key=self._config.project_key,
+            reporter_account_id="",
+            window_days=self._config.my_task_window_days,
+            now=now,
+            assignee_account_id=buffer.sender_jira_account_id,
+        )
+        done_query = QueryRecentlyCompletedRequest(
+            project_key=self._config.project_key,
+            now=now,
+            assignee_account_id=buffer.sender_jira_account_id,
+            lookback_hours=self._config.my_task_completed_lookback_hours,
+            completed_status_names=self._config.my_task_completed_status_names,
+        )
+        try:
+            due_grouped = self._jira_client.query_issues_by_due_date_for_reporter(due_query)
+            done_grouped = self._jira_client.query_issues_completed_in_window(done_query)
+        except JiraClientError as exc:
+            self._end_session(key)
+            return self._map_jira_error(exc)
+
+        sender_key = buffer.sender_jira_account_id
+        due_items = due_grouped.get(sender_key, [])
+        done_items = done_grouped.get(sender_key, [])
+
+        today = now.date()
+        due_upper = today + timedelta(days=self._config.my_task_window_days)
+        overdue_lines: list[str] = []
+        upcoming_lines: list[str] = []
+        for record in due_items:
+            if not record.due_date:
+                continue
+            try:
+                due_value = date.fromisoformat(record.due_date)
+            except ValueError:
+                continue
+            line = f"- {record.issue_key}: {record.summary} (due: {due_value.isoformat()})"
+            if due_value < today:
+                overdue_lines.append(line)
+            elif due_value <= due_upper:
+                upcoming_lines.append(line)
+
+        done_lines: list[str] = []
+        for record in done_items:
+            done_lines.append(f"- {record.issue_key}: {record.summary}")
+
+        header = (
+            f"Việc của bạn trong project {self._config.project_key}:\n"
+            f"- Quá hạn: {len(overdue_lines)}\n"
+            f"- Sắp đến hạn ({self._config.my_task_window_days} ngày): {len(upcoming_lines)}\n"
+            f"- Đã hoàn thành ({self._config.my_task_completed_lookback_hours}h): {len(done_lines)}"
+        )
+        sections = [header]
+        if overdue_lines:
+            sections.append("Quá hạn:\n" + "\n".join(overdue_lines))
+        if upcoming_lines:
+            sections.append("Sắp đến hạn:\n" + "\n".join(upcoming_lines))
+        if done_lines:
+            sections.append(
+                f"Đã hoàn thành trong {self._config.my_task_completed_lookback_hours}h qua:\n"
+                + "\n".join(done_lines)
+            )
+        if not overdue_lines and not upcoming_lines and not done_lines:
+            sections.append("Hiện không có công việc quá hạn, sắp đến hạn hoặc vừa hoàn thành.")
+        self._end_session(key)
+        return "\n\n".join(sections)
 
     def _create_jira_issue(self, *, buffer: ConversationBuffer, key: tuple[int, int]) -> str:
         """Gọi Jira: issue chính, sub-task checklist, upload file; kết thúc phiên."""
