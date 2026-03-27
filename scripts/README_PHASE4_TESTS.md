@@ -8,7 +8,7 @@ python scripts/phase4_users_store_test.py
 ```
 
 Mục tiêu:
-- `get_jira_account_id()` trả `None` khi key không tồn tại / value rỗng/invalid.
+- `get_jira_account_id_by_username()` trả `None` khi key không tồn tại / value rỗng/invalid.
 - `upsert_mapping()` no-op khi input rỗng/invalid.
 - Không overwrite mapping hợp lệ đã tồn tại.
 - Cho phép overwrite khi value trong file là rỗng/invalid.

@@ -62,13 +62,15 @@ def test_get_jira_account_id_empty_and_invalid() -> int:
         p.write_text("{}", encoding="utf-8")
         store = UsersStore(p)
 
-        failures += _check(store.get_jira_account_id("alice") is None, "get: missing key => None")
-        failures += _check(store.get_jira_account_id("   ") is None, "get: whitespace username => None")
+        failures += _check(store.get_jira_account_id_by_username("alice") is None, "get: missing key => None")
+        failures += _check(store.get_jira_account_id_by_username("   ") is None, "get: whitespace username => None")
+        failures += _check(store.get_jira_account_id_by_userid("111") is None, "get by userid: missing key => None")
+        failures += _check(store.get_jira_account_id_by_userid("   ") is None, "get by userid: whitespace => None")
 
         p.write_text(json.dumps({"1": "   "}), encoding="utf-8")
-        failures += _check(store.get_jira_account_id("1") is None, "get: legacy dict blank value => None")
+        failures += _check(store.get_jira_account_id_by_username("1") is None, "get: legacy dict blank value => None")
         p.write_text(json.dumps({"2": 123}), encoding="utf-8")
-        failures += _check(store.get_jira_account_id("2") is None, "get: legacy non-string value => None")
+        failures += _check(store.get_jira_account_id_by_username("2") is None, "get: legacy non-string value => None")
 
     return failures
 
@@ -93,8 +95,9 @@ def test_upsert_validation_and_no_overwrite_valid() -> int:
         )
         failures += _check(added, "upsert: add when key missing => added=true")
         failures += _check(p.exists(), "upsert: creates users.json when valid input")
-        failures += _check(store.get_jira_account_id("alice") == "jira-1", "get after add => stored mapping")
-        failures += _check(store.get_jira_account_id("Alice") == "jira-1", "get case-insensitive username")
+        failures += _check(store.get_jira_account_id_by_username("alice") == "jira-1", "get after add => stored mapping")
+        failures += _check(store.get_jira_account_id_by_username("Alice") == "jira-1", "get case-insensitive username")
+        failures += _check(store.get_jira_account_id_by_userid("111") == "jira-1", "get by userid after add => stored mapping")
 
         content_alice = json.loads(p.read_text(encoding="utf-8"))
         rec_alice = _record_for_username(content_alice, "alice")
@@ -110,7 +113,7 @@ def test_upsert_validation_and_no_overwrite_valid() -> int:
 
         added2 = store.upsert_mapping("alice", "jira-2", telegram_display_name="Alice A")
         failures += _check(not added2, "upsert: existing valid mapping => added=false")
-        failures += _check(store.get_jira_account_id("alice") == "jira-1", "upsert: existing valid mapping preserved")
+        failures += _check(store.get_jira_account_id_by_username("alice") == "jira-1", "upsert: existing valid mapping preserved")
 
     return failures
 
@@ -124,14 +127,14 @@ def test_upsert_overwrite_invalid_value() -> int:
 
         added = store.upsert_mapping("1", "jira-1-new", telegram_display_name="")
         failures += _check(added, "upsert: overwrite when existing legacy value is blank string")
-        failures += _check(store.get_jira_account_id("1") == "jira-1-new", "upsert: overwritten value is retrievable")
-        failures += _check(store.get_jira_account_id("2") == "ok", "upsert: keeps other valid mappings")
+        failures += _check(store.get_jira_account_id_by_username("1") == "jira-1-new", "upsert: overwritten value is retrievable")
+        failures += _check(store.get_jira_account_id_by_username("2") == "ok", "upsert: keeps other valid mappings")
 
         p.write_text(json.dumps({"3": 123}), encoding="utf-8")
         store2 = UsersStore(p)
         added2 = store2.upsert_mapping("3", "jira-3", telegram_display_name="")
         failures += _check(added2, "upsert: overwrite when existing value is non-string")
-        failures += _check(store2.get_jira_account_id("3") == "jira-3", "upsert: overwritten non-string mapping works")
+        failures += _check(store2.get_jira_account_id_by_username("3") == "jira-3", "upsert: overwritten non-string mapping works")
 
     return failures
 

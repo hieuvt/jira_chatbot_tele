@@ -88,12 +88,22 @@ class FakeUsersStore:
 
     def __init__(self, seed: dict[str, str] | None = None) -> None:
         self._data = {_fake_username_key(k): v for k, v in (seed or {}).items() if _fake_username_key(k)}
+        self._by_uid: dict[str, str] = {}
 
-    def get_jira_account_id(self, telegram_username: str) -> str | None:
+    def get_jira_account_id_by_username(self, telegram_username: str) -> str | None:
         key = _fake_username_key(telegram_username)
         if not key:
             return None
         value = self._data.get(key)
+        if not value:
+            return None
+        return value
+
+    def get_jira_account_id_by_userid(self, telegram_user_id: int | str) -> str | None:
+        key = str(telegram_user_id).strip()
+        if not key:
+            return None
+        value = self._by_uid.get(key)
         if not value:
             return None
         return value
@@ -114,6 +124,9 @@ class FakeUsersStore:
         if key in self._data:
             return False
         self._data[key] = jira_account_id
+        uid = str(telegram_id).strip()
+        if uid:
+            self._by_uid[uid] = jira_account_id
         return True
 
     def dump(self) -> dict[str, str]:

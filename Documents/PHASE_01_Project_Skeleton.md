@@ -64,7 +64,7 @@ Documents/                      # plan theo phase
 
 ### 3.4. Users Store
 - Hàm hợp đồng:
-  - `get_jira_account_id(telegram_account_id) -> jira_account_id | None`
+  - `get_jira_account_id_by_username(telegram_account_id) -> jira_account_id | None`
   - `upsert_mapping(telegram_account_id, jira_account_id, *, user_name=..., telegram_display_name=...) -> bool(added)`
   - atomic write/lock được định nghĩa để phase sau implement.
 

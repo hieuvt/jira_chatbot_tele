@@ -18,7 +18,7 @@
 
 ## 3. Contract API
 
-### 3.1. `get_jira_account_id(telegram_account_id) -> jira_account_id | None`
+### 3.1. `get_jira_account_id_by_username(telegram_account_id) -> jira_account_id | None`
 - Trả về `None` nếu không có bản ghi khớp `telegram_id`, hoặc `jira_id` rỗng/invalid.
 - Trả về `None` nếu `telegram_account_id` đầu vào rỗng/whitespace.
 

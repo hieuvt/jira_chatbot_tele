@@ -33,7 +33,7 @@ class UsersStore:
         # Cùng thư mục: users.json.lock
         self.lock_path = file_path.with_name(f"{file_path.name}.lock")
 
-    def get_jira_account_id(self, telegram_username: str) -> str | None:
+    def get_jira_account_id_by_username(self, telegram_username: str) -> str | None:
         """Tra `jira_id` theo Telegram @username (đã chuẩn hoá lowercase); None nếu không có hoặc rỗng."""
         key = _normalize_username_key(telegram_username)
         if not key:
@@ -41,6 +41,22 @@ class UsersStore:
         records = self._read_file(create_if_missing=True)
         for rec in records:
             if _record_username_key(rec) != key:
+                continue
+            jira_raw = rec.get("jira_id")
+            if isinstance(jira_raw, str) and jira_raw.strip():
+                return jira_raw.strip()
+        return None
+
+    def get_jira_account_id_by_userid(self, telegram_user_id: int | str) -> str | None:
+        """Tra `jira_id` theo Telegram `telegram_id`; None nếu không có hoặc rỗng."""
+        key = str(telegram_user_id).strip()
+        if not key:
+            return None
+        records = self._read_file(create_if_missing=True)
+        for rec in records:
+            tid_raw = rec.get("telegram_id")
+            tid = str(tid_raw).strip() if tid_raw is not None else ""
+            if tid != key:
                 continue
             jira_raw = rec.get("jira_id")
             if isinstance(jira_raw, str) and jira_raw.strip():

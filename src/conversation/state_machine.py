@@ -233,7 +233,7 @@ class ConversationStateMachine:
         while True:
             if buffer.state in {ConversationState.S0_START_ASSIGN, ConversationState.S0_START_MY_TASK}:
                 sender = (
-                    self._users_store.get_jira_account_id(buffer.sender_username)
+                    self._users_store.get_jira_account_id_by_username(buffer.sender_username)
                     if buffer.sender_username
                     else None
                 )
@@ -357,7 +357,7 @@ class ConversationStateMachine:
             return self._run_non_interactive_states(buffer=buffer, key=key)
 
         if message.mentioned_username:
-            mapped = self._users_store.get_jira_account_id(message.mentioned_username)
+            mapped = self._users_store.get_jira_account_id_by_username(message.mentioned_username)
             if mapped:
                 buffer.assignee_jira_account_id = mapped
                 buffer.assignee_telegram_display = _to_telegram_display(
@@ -377,6 +377,15 @@ class ConversationStateMachine:
             return self._tpl("TPL_ASK_ASSIGNEE")
 
         if message.mentioned_user_id:
+            mapped = self._users_store.get_jira_account_id_by_userid(message.mentioned_user_id)
+            if mapped:
+                buffer.assignee_jira_account_id = mapped
+                buffer.assignee_telegram_display = _to_telegram_display(
+                    username=message.mentioned_user_name,
+                    user_id=message.mentioned_user_id,
+                )
+                buffer.state = ConversationState.S5_CHECK_ASSIGNEE_MEMBER
+                return self._run_non_interactive_states(buffer=buffer, key=key)
             buffer.pending_assignee_awaiting_jira = True
             buffer.pending_assignee_username = None
             buffer.pending_assignee_telegram_user_id = message.mentioned_user_id
@@ -389,7 +398,7 @@ class ConversationStateMachine:
 
         # Reply tin nhắn của assignee (ForceReply trong nhóm)
         if message.reply_to_username:
-            mapped = self._users_store.get_jira_account_id(message.reply_to_username)
+            mapped = self._users_store.get_jira_account_id_by_username(message.reply_to_username)
             if mapped:
                 buffer.assignee_jira_account_id = mapped
                 buffer.assignee_telegram_display = _to_telegram_display(

@@ -67,8 +67,12 @@ def test_concurrent_upsert_single_key() -> int:
         failures += _check(p.exists(), "concurrency: users.json created")
         failures += _check(added_count == 1, f"concurrency: exactly one added=true (got {added_count})")
 
-        mapped = store.get_jira_account_id(username_key)
+        mapped = store.get_jira_account_id_by_username(username_key)
         failures += _check(mapped is not None and mapped in candidates, "concurrency: stored mapping is one candidate")
+        failures += _check(
+            store.get_jira_account_id_by_userid("1000") is None,
+            "concurrency: lookup by unrelated telegram_id returns None",
+        )
 
     return failures
 
@@ -109,7 +113,7 @@ def test_lock_timeout_no_write() -> int:
         failures += _check(not added, "lock timeout: upsert returns added=false when lock not acquired")
 
         # Should not have written mapping
-        mapped = store2.get_jira_account_id("timeoutuser")
+        mapped = store2.get_jira_account_id_by_username("timeoutuser")
         failures += _check(mapped is None, "lock timeout: mapping remains absent after timeout no-op")
 
         t.join(timeout=3.0)
