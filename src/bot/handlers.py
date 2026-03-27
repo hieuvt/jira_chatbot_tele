@@ -10,6 +10,8 @@ from telegram.ext import Application, ContextTypes, MessageHandler, filters
 
 from src.conversation.state_machine import FileMeta, MessageInput, build_filename
 
+HTML_OUTPUT_PREFIX = "__HTML__:"
+
 
 def _telegram_username_or_none(user: User | None) -> str | None:
     """@username chuẩn hoá (lowercase) để tra/ghi users.json; None nếu user không có username."""
@@ -107,8 +109,10 @@ async def deliver_conversation_output(
     - Prompt cần gõ chữ trong nhóm: reply_text + ForceReply, lưu message_id để /huy gỡ markup.
     """
     key = (chat_id, user_id)
+    is_html_output = output.startswith(HTML_OUTPUT_PREFIX)
+    clean_output = output[len(HTML_OUTPUT_PREFIX) :] if is_html_output else output
 
-    if tpl_cancelled and output.strip() == tpl_cancelled.strip():
+    if tpl_cancelled and clean_output.strip() == tpl_cancelled.strip():
         last_mid = force_reply_tracker.pop(key, None)
         if last_mid is not None:
             try:
@@ -119,15 +123,23 @@ async def deliver_conversation_output(
                 )
             except TelegramError:
                 pass
-        await bot.send_message(chat_id=chat_id, text=output)
+        await bot.send_message(
+            chat_id=chat_id,
+            text=clean_output,
+            parse_mode="HTML" if is_html_output else None,
+        )
         return
 
     reply_markup = (
         ForceReply(selective=True, input_field_placeholder="…")
-        if chat_type in ("group", "supergroup") and _needs_user_reply(output)
+        if chat_type in ("group", "supergroup") and _needs_user_reply(clean_output)
         else None
     )
-    sent = await trigger_message.reply_text(output, reply_markup=reply_markup)
+    sent = await trigger_message.reply_text(
+        clean_output,
+        reply_markup=reply_markup,
+        parse_mode="HTML" if is_html_output else None,
+    )
     if reply_markup is not None and sent and getattr(sent, "message_id", None) is not None:
         force_reply_tracker[key] = int(sent.message_id)
 
