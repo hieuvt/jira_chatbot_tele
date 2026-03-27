@@ -2,6 +2,15 @@
 
 Format dựa trên [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [2026-03-27]
+
+### Added
+- Thêm command trợ giúp `/huongdan` và `/help` (intent `HELP`) để bot trả về message hướng dẫn sử dụng cố định.
+- Bổ sung template `TPL_HELP` trong `config/templates.json`.
+
+### Changed
+- Cập nhật `TPL_UNKNOWN_INTENT` để nhắc đầy đủ các lệnh hợp lệ gồm `/huongdan` và `/help`.
+
 ## [2026-03-19]
 
 ### Added
