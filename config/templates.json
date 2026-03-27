@@ -5,12 +5,12 @@
         "/giaoviec"
       ],
       "MY_TASK": [
-        "/vieccuatoi"
+        "/giaochotoi"
       ]
     }
   },
   "bot_replies": {
-    "TPL_UNKNOWN_INTENT": "Mình chưa hiểu yêu cầu. Bạn hãy nhập đúng 1 trong 2 lệnh: \"/giaoviec\" hoặc \"/vieccuatoi\".",
+    "TPL_UNKNOWN_INTENT": "Mình chưa hiểu yêu cầu. Bạn hãy nhập đúng 1 trong 2 lệnh: \"/giaoviec\" hoặc \"/giaochotoi\".",
     "TPL_ASK_SENDER_JIRA_ID": "Bạn chưa liên kết Jira. Vui lòng nhập jira_account_id của bạn.",
     "TPL_NOT_PROJECT_MEMBER": "Bạn chưa là thành viên của project trên Jira. Vui lòng kiểm tra lại quyền trước khi dùng bot.",
     "TPL_NOT_ADMIN_ASSIGN": "Chỉ Admin của project mới có quyền giao việc.",

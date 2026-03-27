@@ -75,6 +75,10 @@ def bootstrap_app() -> dict[str, Any]:
     report_times = notification_cfg.get("report_times", ["08:00", "17:00"])
     if not isinstance(report_times, list):
         report_times = ["08:00", "17:00"]
+    completed_status_names = notification_cfg.get("completed_status_names", ["Done"])
+    if not isinstance(completed_status_names, list) or not completed_status_names:
+        completed_status_names = ["Done"]
+    completed_lookback_hours = int(notification_cfg.get("completed_lookback_hours", 24))
 
     users_store = UsersStore(users_path)
 
@@ -105,6 +109,8 @@ def bootstrap_app() -> dict[str, Any]:
         project_key=str(jira["project_key"]),
         bot_token=token,
         logger=logger,
+        lookback_hours=completed_lookback_hours,
+        completed_status_names=[str(x).strip() for x in completed_status_names if str(x).strip()],
     )
 
     scheduler = build_scheduler(timezone=report_timezone)

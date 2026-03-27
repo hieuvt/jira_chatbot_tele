@@ -49,6 +49,18 @@ class QueryIssuesRequest:
 
 
 @dataclass
+class QueryRecentlyCompletedRequest:
+    """Issue chuyển sang trạng thái hoàn thành trong khoảng [now - lookback_hours, now]."""
+
+    project_key: str
+    now: datetime
+    lookback_hours: int = 24
+    completed_status_names: list[str] = field(default_factory=lambda: ["Done"])
+    max_results: int = 50
+    max_pages: int = 20
+
+
+@dataclass
 class JiraIssueRecord:
     """Một issue đã parse từ API search (tối thiểu field cần cho báo cáo)."""
 

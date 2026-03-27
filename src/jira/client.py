@@ -16,6 +16,7 @@ from src.jira.models import (
     IssueCreateRequest,
     JiraIssueRecord,
     QueryIssuesRequest,
+    QueryRecentlyCompletedRequest,
     SubtaskCreateRequest,
 )
 
@@ -205,6 +206,54 @@ class JiraClient:
             if start_at >= total or not issues:
                 break
         return grouped
+
+    def query_issues_completed_in_window(
+        self, query: QueryRecentlyCompletedRequest
+    ) -> dict[str, list[JiraIssueRecord]]:
+        """JQL lịch sử: status CHANGED TO … DURING (bắt đầu, kết thúc), chỉ nhóm Done."""
+        if query.now.tzinfo is None:
+            raise ValueError("now must be timezone-aware datetime")
+        jql = self._build_jql_recently_completed(query)
+        grouped: dict[str, list[JiraIssueRecord]] = {}
+        start_at = 0
+        for _ in range(query.max_pages):
+            params = {
+                "jql": jql,
+                "fields": "summary,assignee,duedate,status,project,issuetype",
+                "startAt": str(start_at),
+                "maxResults": str(query.max_results),
+            }
+            response = self._request_json("GET", "/rest/api/3/search/jql", params=params)
+            issues = response.get("issues", [])
+            if not isinstance(issues, list):
+                break
+            for issue in issues:
+                record = self._to_issue_record(issue)
+                if (record.status_category_key or "").strip().lower() != "done":
+                    continue
+                group_key = record.assignee_account_id or "unassigned"
+                grouped.setdefault(group_key, []).append(record)
+            total = int(response.get("total", 0))
+            start_at += query.max_results
+            if start_at >= total or not issues:
+                break
+        return grouped
+
+    def _build_jql_recently_completed(self, query: QueryRecentlyCompletedRequest) -> str:
+        window_end = query.now
+        window_start = query.now - timedelta(hours=query.lookback_hours)
+        start_s = window_start.strftime("%Y/%m/%d %H:%M")
+        end_s = window_end.strftime("%Y/%m/%d %H:%M")
+        during = f'("{start_s}", "{end_s}")'
+        names = [str(n).strip() for n in query.completed_status_names if str(n).strip()]
+        if not names:
+            names = ["Done"]
+        status_clauses: list[str] = []
+        for name in names:
+            escaped = name.replace("\\", "\\\\").replace('"', '\\"')
+            status_clauses.append(f'status CHANGED TO "{escaped}" DURING {during}')
+        status_expr = status_clauses[0] if len(status_clauses) == 1 else "(" + " OR ".join(status_clauses) + ")"
+        return f'project = "{query.project_key}" AND statusCategory = Done AND {status_expr}'
 
     # --- Nội bộ: quyền bot, role actors, HTTP, lỗi, ADF, multipart ---
 

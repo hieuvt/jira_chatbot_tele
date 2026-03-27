@@ -42,10 +42,15 @@ def _check(cond: bool, label: str) -> int:
 @dataclass
 class FakeJiraClient:
     grouped_issues: dict[str, list[JiraIssueRecord]]
+    completed_issues: dict[str, list[JiraIssueRecord]] | None = None
 
     def query_issues_by_due_date_for_reporter(self, query: Any) -> dict[str, list[JiraIssueRecord]]:  # noqa: ANN401
         _ = query
         return self.grouped_issues
+
+    def query_issues_completed_in_window(self, query: Any) -> dict[str, list[JiraIssueRecord]]:  # noqa: ANN401
+        _ = query
+        return self.completed_issues or {}
 
 
 def main() -> int:
@@ -71,6 +76,11 @@ def main() -> int:
                         "user_name": "fallback_ten",
                         "telegram_display_name": "User Ten",
                         "jira_id": "jira-1",
+                    },
+                    {
+                        "user_name": "only_done",
+                        "telegram_display_name": "Only Done",
+                        "jira_id": "jira-3",
                     },
                 ]
             ),
@@ -142,8 +152,31 @@ def main() -> int:
             ],
         }
 
+        completed: dict[str, list[JiraIssueRecord]] = {
+            "jira-1": [
+                JiraIssueRecord(
+                    issue_key="OM-40",
+                    summary="review Phase 1 Huy",
+                    due_date="2026-03-25",
+                    status="Done",
+                    assignee_account_id="jira-1",
+                    status_category_key="done",
+                ),
+            ],
+            "jira-3": [
+                JiraIssueRecord(
+                    issue_key="OM-77",
+                    summary="Chỉ có completed",
+                    due_date=None,
+                    status="Done",
+                    assignee_account_id="jira-3",
+                    status_category_key="done",
+                ),
+            ],
+        }
+
         reporter = Reporter(
-            jira_client=FakeJiraClient(grouped_issues=grouped),
+            jira_client=FakeJiraClient(grouped_issues=grouped, completed_issues=completed),
             users_store=users_store,
             project_key="OM",
             bot_token="TEST_TOKEN",
@@ -155,18 +188,25 @@ def main() -> int:
         # Block 1 totals
         expected_upcoming = 4  # jira-1: 3, jira-2: 1
         expected_overdue = 2  # jira-1: 1, unassigned: 1
+        expected_completed = 2  # jira-1: 1, jira-3: 1
         failures += _check(
-            messages[0] == f"Tổng sắp đến hạn: {expected_upcoming}\nTổng quá hạn: {expected_overdue}",
+            messages[0]
+            == (
+                f"Tổng sắp đến hạn: {expected_upcoming}\n"
+                f"Tổng quá hạn: {expected_overdue}\n"
+                f"Tổng đã hoàn thành trong 24h qua: {expected_completed}"
+            ),
             "Block 1 exact totals text",
         )
 
-        # Included assignees: fallback_ten, fallback_two, Unassigned => 3 block2 messages + block1
-        failures += _check(len(messages) == 4, "Total messages count (block1 + 3 assignees)")
+        # Included assignees: fallback_ten, fallback_two, only_done, Unassigned => 4 block2 + block1
+        failures += _check(len(messages) == 5, "Total messages count (block1 + 4 assignees)")
 
-        # Assignee order: fallback_ten < fallback_two lexicographically, Unassigned last
+        # Assignee order: fallback_ten < fallback_two < only_done lexicographically, Unassigned last
         failures += _check(messages[1].startswith("Assignee: @fallback_ten\n"), "Assignee order: fallback_ten first")
         failures += _check(messages[2].startswith("Assignee: @fallback_two\n"), "Assignee order: fallback_two second")
-        failures += _check(messages[3].startswith("Assignee: Unassigned\n"), "Assignee order: Unassigned last")
+        failures += _check(messages[3].startswith("Assignee: @only_done\n"), "Assignee order: only_done third")
+        failures += _check(messages[4].startswith("Assignee: Unassigned\n"), "Assignee order: Unassigned last")
 
         # Assignee jira-1 (fallback_ten): overdue + upcoming => has blank line exactly once between headings
         lines_ten = messages[1].splitlines()
@@ -181,6 +221,12 @@ def main() -> int:
         failures += _check(lines_ten[6] == "- OM-102: Upcoming C (due: 2026-03-22)", "Upcoming sorting 2")
         failures += _check(lines_ten[7] == "- OM-101: Upcoming D (due: 2026-03-23)", "Upcoming sorting 3")
         failures += _check("" not in lines_ten[5:8], "No blank lines between issue lines (fallback_ten)")
+        failures += _check(lines_ten[8] == "", "Blank line before completed section")
+        failures += _check(lines_ten[9] == "Đã hoàn thành trong 24h qua", "Completed section heading")
+        failures += _check(
+            lines_ten[10] == "- OM-40: review Phase 1 Huy (due: 2026-03-25)",
+            "Completed issue line (no base_url in fake client)",
+        )
 
         # Assignee jira-2 (fallback_two): only upcoming => no "Quá hạn:" heading
         lines_two = messages[2].splitlines()
@@ -192,8 +238,18 @@ def main() -> int:
             "Assignee fallback_two issue line formatting",
         )
 
+        # only_done: chỉ completed + due N/A
+        lines_od = messages[3].splitlines()
+        failures += _check(lines_od[0] == "Assignee: @only_done", "only_done first line")
+        failures += _check(lines_od[1] == "Đã hoàn thành trong 24h qua", "only_done has only completed heading")
+        failures += _check(
+            lines_od[2] == "- OM-77: Chỉ có completed (due: N/A)",
+            "only_done issue due N/A when duedate empty",
+        )
+        failures += _check("Quá hạn:" not in lines_od and "Sắp đến hạn:" not in lines_od, "only_done no due sections")
+
         # Unassigned: only overdue => no upcoming heading
-        lines_u = messages[3].splitlines()
+        lines_u = messages[4].splitlines()
         failures += _check(lines_u[0] == "Assignee: Unassigned", "Unassigned first line")
         failures += _check("Sắp đến hạn:" not in lines_u, "Unassigned should not include Sắp đến hạn section")
         failures += _check(lines_u[1] == "Quá hạn:", "Unassigned has Quá hạn heading")
