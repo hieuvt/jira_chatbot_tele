@@ -82,11 +82,23 @@ def bootstrap_app() -> dict[str, Any]:
 
     users_store = UsersStore(users_path)
 
+    token = str(telegram_cfg["bot_token"])
+    reporter = Reporter(
+        jira_client=jira_client,
+        users_store=users_store,
+        project_key=str(jira["project_key"]),
+        bot_token=token,
+        logger=logger,
+        lookback_hours=completed_lookback_hours,
+        completed_status_names=[str(x).strip() for x in completed_status_names if str(x).strip()],
+    )
+
     state_machine = ConversationStateMachine(
         jira_client=jira_client,
         users_store=users_store,
         templates=template_bundle.bot_replies,
         intent_aliases=template_bundle.intent_aliases,
+        reporter=reporter,
         config=StateMachineConfig(
             project_key=str(jira["project_key"]),
             issue_type_id=str(jira["issue_type_id"]),
@@ -98,23 +110,14 @@ def bootstrap_app() -> dict[str, Any]:
             my_task_window_days=window_days,
             my_task_completed_lookback_hours=completed_lookback_hours,
             my_task_completed_status_names=[str(x).strip() for x in completed_status_names if str(x).strip()],
+            report_window_days=window_days,
+            report_timezone=report_timezone,
         ),
     )
 
-    token = str(telegram_cfg["bot_token"])
     application = Application.builder().token(token).build()
     tpl_cancelled = str(template_bundle.bot_replies.get("TPL_CANCELLED", ""))
     register_handlers(application, state_machine, tpl_cancelled=tpl_cancelled)
-
-    reporter = Reporter(
-        jira_client=jira_client,
-        users_store=users_store,
-        project_key=str(jira["project_key"]),
-        bot_token=token,
-        logger=logger,
-        lookback_hours=completed_lookback_hours,
-        completed_status_names=[str(x).strip() for x in completed_status_names if str(x).strip()],
-    )
 
     scheduler = build_scheduler(timezone=report_timezone)
 

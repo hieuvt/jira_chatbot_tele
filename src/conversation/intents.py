@@ -15,6 +15,7 @@ class Intent(str, Enum):
     ASSIGN_TASK_SELF = "ASSIGN_TASK_SELF"
     MY_TASK = "MY_TASK"
     MARK_TASK_DONE = "MARK_TASK_DONE"
+    BAOCAO = "BAOCAO"
     HELP = "HELP"
     UNKNOWN = "UNKNOWN"
 
@@ -33,6 +34,7 @@ DEFAULT_INTENT_ALIASES: dict[Intent, list[str]] = {
     Intent.ASSIGN_TASK_SELF: ["/giaochotoi"],
     Intent.MY_TASK: ["/vieccuatoi"],
     Intent.MARK_TASK_DONE: ["/baoxong", "/baohoanthanh"],
+    Intent.BAOCAO: ["/baocao"],
     Intent.HELP: ["/huongdan", "/help"],
 }
 

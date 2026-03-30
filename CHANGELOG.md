@@ -9,6 +9,7 @@ Format dựa trên [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `JiraClient.query_incomplete_issues_for_assignee` và `JiraClient.transition_issue_to_done`.
 - Template `TPL_NO_INCOMPLETE_TASKS`, `TPL_MARK_DONE_INVALID_INDEX`, `TPL_MARK_DONE_CONFIRM`; cập nhật `TPL_HELP`, `TPL_UNKNOWN_INTENT` và alias trong `config/templates.json`.
 - Chuẩn hoá lệnh `/...@BotName` khi so khớp intent (nhóm Telegram).
+- Lệnh **báo cáo theo yêu cầu** `/baocao` (intent `BAOCAO`): chỉ Admin project được phép; bot trả báo cáo giống `Reporter` (nhiều tin nhắn).
 
 ### Changed
 - `README.md`: mô tả tính năng báo hoàn thành, quyền transition trên Jira; làm rõ `/vieccuatoi` (xem việc) vs `/giaochotoi` (tự tạo task).

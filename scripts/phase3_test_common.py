@@ -15,6 +15,7 @@ from src.conversation.state_machine import (
     StateMachineConfig,
 )
 from src.conversation.templates import load_template_bundle
+from src.reports.reporter import Reporter
 from src.jira.models import (
     AttachmentMeta,
     IssueCreateRequest,
@@ -168,6 +169,34 @@ class FakeUsersStore:
             self._by_uid[uid] = jira_account_id
         return True
 
+    # --- Methods phục vụ Reporter (Phase 5) ---
+
+    def get_reverse_mapping(self) -> dict[str, str]:
+        """
+        Map ngược cho reporter: key = jira_account_id, value = user_name (@username, lowercase).
+        """
+        reverse: dict[str, str] = {}
+        for uname, jira_id in self._data.items():
+            if not jira_id:
+                continue
+            existing = reverse.get(jira_id)
+            if existing is None or uname < existing:
+                reverse[jira_id] = uname
+        return reverse
+
+    def get_user_record_by_user_name(self, telegram_username: str) -> dict[str, str] | None:
+        key = _fake_username_key(telegram_username)
+        if not key:
+            return None
+        jira_id = self._data.get(key)
+        if not jira_id:
+            return None
+        return {
+            "user_name": key,
+            "telegram_display_name": "",
+            "jira_id": jira_id,
+        }
+
     def dump(self) -> dict[str, str]:
         return self._data.copy()
 
@@ -199,11 +228,30 @@ def build_state_machine(
         fail_on_upload=(jira_overrides or {}).get("upload"),
     )
     users_store = FakeUsersStore(seed=user_mapping)
+
+    # Reporter chỉ dùng để build message; FakeJiraClient/FakeUsersStore không gọi mạng.
+    telegram_bot_token = str((telegram or {}).get("bot_token", "fake"))
+    due_cfg = runtime.get("due", {}) if isinstance(runtime.get("due"), dict) else {}
+    notification_cfg = due_cfg.get("notification", {}) if isinstance(due_cfg.get("notification"), dict) else {}
+    completed_lookback_hours = int(notification_cfg.get("completed_lookback_hours", 24))
+    completed_status_names = notification_cfg.get("completed_status_names", ["Done"])
+    if not isinstance(completed_status_names, list) or not completed_status_names:
+        completed_status_names = ["Done"]
+    reporter = Reporter(
+        jira_client=fake_jira,
+        users_store=users_store,
+        project_key=str(jira["project_key"]),
+        bot_token=telegram_bot_token,
+        logger=None,
+        lookback_hours=completed_lookback_hours,
+        completed_status_names=[str(x).strip() for x in completed_status_names if str(x).strip()],
+    )
     machine = ConversationStateMachine(
         jira_client=fake_jira,
         users_store=users_store,
         templates=template_bundle.bot_replies,
         intent_aliases=template_bundle.intent_aliases,
+        reporter=reporter,
         config=StateMachineConfig(
             project_key=str(jira["project_key"]),
             issue_type_id=str(jira["issue_type_id"]),

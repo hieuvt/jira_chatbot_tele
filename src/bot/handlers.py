@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import json
 
 from telegram import ForceReply, Message, Update, User
 from telegram.error import TelegramError
 from telegram.ext import Application, ContextTypes, MessageHandler, filters
 
-from src.conversation.state_machine import FileMeta, MessageInput, build_filename
+from src.conversation.state_machine import FileMeta, MessageInput, build_filename, MULTI_MESSAGE_PREFIX
 
 HTML_OUTPUT_PREFIX = "__HTML__:"
 
@@ -111,6 +112,27 @@ async def deliver_conversation_output(
     - Prompt cần gõ chữ trong nhóm: reply_text + ForceReply, lưu message_id để /huy gỡ markup.
     """
     key = (chat_id, user_id)
+    if output.startswith(MULTI_MESSAGE_PREFIX):
+        raw = output[len(MULTI_MESSAGE_PREFIX) :]
+        last_mid = force_reply_tracker.pop(key, None)
+        if last_mid is not None:
+            try:
+                await bot.edit_message_reply_markup(
+                    chat_id=chat_id,
+                    message_id=last_mid,
+                    reply_markup=None,
+                )
+            except TelegramError:
+                pass
+        try:
+            parsed = json.loads(raw)
+            message_texts = parsed if isinstance(parsed, list) else [parsed]
+            message_texts = [str(x) for x in message_texts]
+        except Exception:
+            message_texts = [raw]
+        for text in message_texts:
+            await bot.send_message(chat_id=chat_id, text=text, parse_mode="HTML")
+        return
     is_html_output = output.startswith(HTML_OUTPUT_PREFIX)
     clean_output = output[len(HTML_OUTPUT_PREFIX) :] if is_html_output else output
 

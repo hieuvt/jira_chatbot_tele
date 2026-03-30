@@ -13,11 +13,13 @@ _project_root = Path(__file__).resolve().parents[2]
 if str(_project_root) not in sys.path:
     sys.path.insert(0, str(_project_root))
 
+import json
 import mimetypes
 import html
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
 from enum import Enum
+from zoneinfo import ZoneInfo
 
 from src.common.errors import JiraClientError
 from src.conversation.intents import Intent, resolve_intent
@@ -49,6 +51,7 @@ def _telegram_id_for_assignee_store(*, pending_uid: int | None, bot_user_id: int
 
 
 HTML_OUTPUT_PREFIX = "__HTML__:"
+MULTI_MESSAGE_PREFIX = "__MULTI_MESSAGE__:"
 
 
 def _jira_browse_anchor(issue_key: str, jira_base_url: str) -> str:
@@ -64,8 +67,18 @@ def _jira_browse_anchor(issue_key: str, jira_base_url: str) -> str:
 def _wrap_html_output(body: str) -> str:
     return f"{HTML_OUTPUT_PREFIX}{body}"
 
-
 # --- Các trạng thái FSM (bước hỏi / kiểm tra Jira) ---
+
+def _now_in_tz(tz_name: str) -> datetime:
+    """Tạo datetime tz-aware theo timezone tên; fallback khi thiếu tzdata (Windows)."""
+    try:
+        tz = ZoneInfo(tz_name)
+    except Exception:
+        if str(tz_name).lower() == "asia/ho_chi_minh":
+            tz = timezone(timedelta(hours=7))
+        else:
+            tz = timezone.utc
+    return datetime.now(tz=tz)
 
 
 class ConversationState(str, Enum):
@@ -73,6 +86,7 @@ class ConversationState(str, Enum):
     S0_START_ASSIGN_SELF = "S0_START_ASSIGN_SELF"
     S0_START_MY_TASK = "S0_START_MY_TASK"
     S0_START_MARK_DONE = "S0_START_MARK_DONE"
+    S0_START_BAOCAO = "S0_START_BAOCAO"
     S1_ASK_SENDER_JIRA_ID = "S1_ASK_SENDER_JIRA_ID"
     S2_CHECK_SENDER_MEMBER = "S2_CHECK_SENDER_MEMBER"
     S3_CHECK_SENDER_ADMIN = "S3_CHECK_SENDER_ADMIN"
@@ -177,6 +191,9 @@ class StateMachineConfig:
     my_task_window_days: int = 3
     my_task_completed_lookback_hours: int = 24
     my_task_completed_status_names: list[str] = field(default_factory=lambda: ["Done"])
+    # Phase 5 reporting (dùng cho command /baocao)
+    report_window_days: int = 3
+    report_timezone: str = "Asia/Ho_Chi_Minh"
 
 
 class ConversationStateMachine:
@@ -190,12 +207,14 @@ class ConversationStateMachine:
         templates: dict[str, str],
         config: StateMachineConfig,
         intent_aliases: dict[str, list[str]] | None = None,
+        reporter: object | None = None,
     ) -> None:
         self._jira_client = jira_client
         self._users_store = users_store
         self._templates = templates
         self._config = config
         self._intent_aliases = intent_aliases or {}
+        self._reporter = reporter
         self._sessions: dict[tuple[int, int], ConversationBuffer] = {}
 
     def handle_message(self, message: MessageInput) -> str:
@@ -219,6 +238,7 @@ class ConversationStateMachine:
                 Intent.ASSIGN_TASK_SELF,
                 Intent.MY_TASK,
                 Intent.MARK_TASK_DONE,
+                Intent.BAOCAO,
             }:
                 self._end_session(key)
                 return self._start_new_session(message=message, intent=route.intent)
@@ -256,6 +276,14 @@ class ConversationStateMachine:
                 chat_id=message.chat_id,
                 user_id=message.user_id,
                 state=ConversationState.S0_START_MARK_DONE,
+                sender_username=message.sender_username,
+            )
+        elif intent == Intent.BAOCAO:
+            buffer = ConversationBuffer(
+                intent=intent,
+                chat_id=message.chat_id,
+                user_id=message.user_id,
+                state=ConversationState.S0_START_BAOCAO,
                 sender_username=message.sender_username,
             )
         else:
@@ -302,6 +330,7 @@ class ConversationStateMachine:
                 ConversationState.S0_START_ASSIGN_SELF,
                 ConversationState.S0_START_MY_TASK,
                 ConversationState.S0_START_MARK_DONE,
+                ConversationState.S0_START_BAOCAO,
             }:
                 sender = None
                 if buffer.sender_username:
@@ -310,7 +339,10 @@ class ConversationStateMachine:
                     sender = self._users_store.get_jira_account_id_by_userid(buffer.user_id)
                 if sender:
                     buffer.sender_jira_account_id = sender
-                    buffer.state = ConversationState.S2_CHECK_SENDER_MEMBER
+                    if buffer.intent == Intent.BAOCAO:
+                        buffer.state = ConversationState.S3_CHECK_SENDER_ADMIN
+                    else:
+                        buffer.state = ConversationState.S2_CHECK_SENDER_MEMBER
                     continue
                 buffer.state = ConversationState.S1_ASK_SENDER_JIRA_ID
                 return self._tpl("TPL_ASK_SENDER_JIRA_ID")
@@ -366,6 +398,23 @@ class ConversationStateMachine:
                 if not is_admin:
                     self._end_session(key)
                     return self._tpl("TPL_NOT_ADMIN_ASSIGN")
+                if buffer.intent == Intent.BAOCAO:
+                    if self._reporter is None:
+                        self._end_session(key)
+                        return "Báo cáo chưa sẵn sàng."
+                    now = _now_in_tz(self._config.report_timezone)
+                    try:
+                        message_texts: list[str] = self._reporter.build_report_messages(
+                            window_days=self._config.report_window_days,
+                            now=now,
+                        )
+                    except JiraClientError as exc:
+                        self._end_session(key)
+                        return self._map_jira_error(exc)
+                    self._end_session(key)
+                    payload = json.dumps(message_texts, ensure_ascii=False)
+                    return f"{MULTI_MESSAGE_PREFIX}{payload}"
+
                 buffer.state = ConversationState.S4_ASK_ASSIGNEE
                 return (
                     "Chọn người được giao việc: reply tin nhắn của họ hoặc @mention họ. "
@@ -411,7 +460,10 @@ class ConversationStateMachine:
                 telegram_id=str(message.user_id),
             )
         buffer.sender_jira_account_id = jira_account_id
-        buffer.state = ConversationState.S2_CHECK_SENDER_MEMBER
+        if buffer.intent == Intent.BAOCAO:
+            buffer.state = ConversationState.S3_CHECK_SENDER_ADMIN
+        else:
+            buffer.state = ConversationState.S2_CHECK_SENDER_MEMBER
         return self._run_non_interactive_states(buffer=buffer, key=key)
 
     def _on_assignee(self, *, buffer: ConversationBuffer, message: MessageInput, key: tuple[int, int]) -> str:

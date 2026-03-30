@@ -8,6 +8,7 @@ Bot Telegram kết nối **Jira Cloud** để tạo việc (issue + sub-task che
 - **Việc của tôi** (`/vieccuatoi`): Xem tóm tắt issue được gán cho bạn trong project (quá hạn, sắp đến hạn, hoàn thành gần đây).
 - **Giao cho tôi** (`/giaochotoi`): Tự tạo task gán cho chính mình (wizard giống giao việc, không cần quyền admin project).
 - **Báo hoàn thành** (`/baoxong` hoặc `/baohoanthanh`): Bot liệt kê issue trong project được gán cho bạn còn trạng thái chưa Done; bạn nhập số thứ tự, xác nhận **Có** để bot gọi Jira chuyển issue sang Done.
+- **Báo cáo theo yêu cầu** (`/baocao`): Chỉ Admin project; gửi nội dung báo cáo giống báo cáo định kỳ theo due date.
 - **Hủy phiên**: `/huy` hoặc `/cancel` trong lúc đang điền form.
 - **Hướng dẫn nhanh** (`/huongdan` hoặc `/help`): Trả về message cố định mô tả điều kiện sử dụng và danh sách lệnh.
 - **Báo cáo định kỳ**: Theo `due.notification.report_times` và timezone trong config; gửi vào chat đầu tiên trong `allowed_chat_ids`.
@@ -209,7 +210,10 @@ Luồng giống giao việc nhưng assignee là **chính bạn**; không cần q
 
 Thành viên tự kiểm tra công việc của chính mình
 
-### 5. Xem hướng dẫn nhanh
+### 6. Báo cáo theo yêu cầu — `/baocao`
+Chỉ Admin project có quyền gửi báo cáo; bot trả về báo cáo giống báo cáo định kỳ theo due date.
+
+### 7. Xem hướng dẫn nhanh
 
 - Gửi `**/huongdan**` hoặc `**/help**` để bot trả về nội dung hướng dẫn sử dụng cố định.
 

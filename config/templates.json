@@ -14,6 +14,9 @@
         "/baoxong",
         "/baohoanthanh"
       ],
+      "BAOCAO": [
+        "/baocao"
+      ],
       "HELP": [
         "/huongdan",
         "/help"
@@ -21,8 +24,8 @@
     }
   },
   "bot_replies": {
-    "TPL_UNKNOWN_INTENT": "Mình chưa hiểu yêu cầu. Bạn hãy nhập đúng 1 trong các lệnh: \"/giaoviec\", \"/giaochotoi\", \"/vieccuatoi\", \"/baoxong\", \"/baohoanthanh\", \"/huongdan\" hoặc \"/help\".",
-    "TPL_HELP": "Đây là bot hỗ trợ quản lý công việc. Điều kiện sử dụng:\n- Team phải setup trước project trên jira\n- Các thành viên trong nhóm chat là thành viên project trên jira\n\nBạn có thể dùng các chức năng sau:\n/giaoviec : dùng cho manager giao việc cho các thành viên\n/giaochotoi: thành viên tự note task cho chính mình\n/vieccuatoi: thành viên tự kiểm tra danh sách công việc của chính mình\n/baoxong hoặc /baohoanthanh: báo hoàn thành một task được gán cho bạn — bot liệt kê issue Jira trong project chưa Done, bạn chọn số thứ tự và xác nhận \"Có\" hoặc \"Không\" để chuyển trạng thái sang Done\n/huy: khi note việc không đúng nội dung hoặc muốn thoát phiên đang điền, dùng lệnh này để hủy\n\n\nNgoài ra, hàng ngày bot sẽ tự động gửi tóm tắt danh sách công việc của các thành viên vào khung giờ cố định",
+    "TPL_UNKNOWN_INTENT": "Mình chưa hiểu yêu cầu. Bạn hãy nhập đúng 1 trong các lệnh: \"/giaoviec\", \"/giaochotoi\", \"/vieccuatoi\", \"/baoxong\", \"/baohoanthanh\", \"/baocao\", \"/huongdan\" hoặc \"/help\".",
+    "TPL_HELP": "Đây là bot hỗ trợ quản lý công việc. Điều kiện sử dụng:\n- Team phải setup trước project trên jira\n- Các thành viên trong nhóm chat là thành viên project trên jira\n\nBạn có thể dùng các chức năng sau:\n/giaoviec : dùng cho manager giao việc cho các thành viên\n/giaochotoi: thành viên tự note task cho chính mình\n/vieccuatoi: thành viên tự kiểm tra danh sách công việc của chính mình\n/baoxong hoặc /baohoanthanh: báo hoàn thành một task được gán cho người dùng\n/baocao: admin project gửi báo cáo giống báo cáo định kỳ theo due date\n/huy: khi note việc không đúng nội dung hoặc muốn thoát phiên đang điền, dùng lệnh này để hủy\n\n\nNgoài ra, hàng ngày bot sẽ tự động gửi tóm tắt danh sách công việc của các thành viên vào khung giờ cố định",
     "TPL_NO_INCOMPLETE_TASKS": "Bạn không có task nào chưa hoàn thành.",
     "TPL_MARK_DONE_INVALID_INDEX": "Số thứ tự không hợp lệ. Vui lòng nhập số từ 1 đến {n}.",
     "TPL_MARK_DONE_CONFIRM": "Xác nhận báo hoàn thành issue {issue_key}: {summary}? Nhập \"Có\" để cập nhật Jira, hoặc \"Không\" để hủy.",

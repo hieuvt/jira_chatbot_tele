@@ -6,6 +6,7 @@ Usage:
 
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 
@@ -122,6 +123,55 @@ def run_mark_done_flow() -> int:
     return failures
 
 
+def run_baocao_flow_admin() -> int:
+    print("[scenario] baocao (admin) returns multi-message report")
+    failures = 0
+    chat_id = 2005
+    user_id = 5005
+    sender_jira = "jira-admin-5005"
+    tg_sender = "u5005"
+
+    machine, _, _ = build_state_machine(
+        user_mapping={tg_sender: sender_jira},
+        member_ids=set(),
+        admin_ids={sender_jira},
+    )
+    su = dict(sender_username=tg_sender)
+    msg = machine.handle_message(make_text(chat_id, user_id, "/baocao", **su))
+
+    prefix = "__MULTI_MESSAGE__:"
+    failures += _check(msg.startswith(prefix), "baocao uses multi-message prefix")
+    if msg.startswith(prefix):
+        raw = msg[len(prefix) :]
+        try:
+            payload = json.loads(raw)
+        except Exception:
+            payload = None
+        failures += _check(isinstance(payload, list) and len(payload) >= 1, "baocao payload is non-empty list")
+        if isinstance(payload, list) and payload:
+            failures += _check("Tổng sắp đến hạn" in str(payload[0]), "baocao overall text present")
+    return failures
+
+
+def run_baocao_flow_non_admin() -> int:
+    print("[scenario] baocao (non-admin) denied")
+    failures = 0
+    chat_id = 2006
+    user_id = 5006
+    sender_jira = "jira-user-5006"
+    tg_sender = "u5006"
+
+    machine, _, _ = build_state_machine(
+        user_mapping={tg_sender: sender_jira},
+        member_ids=set(),
+        admin_ids=set(),
+    )
+    su = dict(sender_username=tg_sender)
+    msg = machine.handle_message(make_text(chat_id, user_id, "/baocao", **su))
+    failures += _check(msg.strip() == "Chỉ Admin của project mới có quyền giao việc.", "baocao denied message")
+    return failures
+
+
 def run_assign_task_flow() -> int:
     print("[scenario] assign_task with missing assignee mapping")
     failures = 0
@@ -186,6 +236,8 @@ def main() -> int:
     failures += run_assign_self_flow()
     failures += run_vieccuatoi_report_flow()
     failures += run_mark_done_flow()
+    failures += run_baocao_flow_admin()
+    failures += run_baocao_flow_non_admin()
     failures += run_assign_task_flow()
     if failures:
         print(f"PHASE 3 SMOKE TEST FAILED with {failures} issue(s)")
