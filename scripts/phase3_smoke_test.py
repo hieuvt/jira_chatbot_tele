@@ -110,10 +110,13 @@ def run_mark_done_flow() -> int:
     ]
     su = dict(sender_username=tg_sender)
     msg = machine.handle_message(make_text(chat_id, user_id, "/baoxong", **su))
+    failures += _check(msg.startswith("__HTML__:"), "baoxong list uses HTML prefix")
     failures += _check("Nhập số thứ tự" in msg and "OM-1" in msg, "list incomplete tasks")
     msg = machine.handle_message(make_text(chat_id, user_id, "1", **su))
+    failures += _check(msg.startswith("__HTML__:"), "baoxong confirm uses HTML prefix")
     failures += _check("OM-1" in msg and ("Có" in msg or "có" in msg.lower()), "confirm mark done")
     msg = machine.handle_message(make_text(chat_id, user_id, "có", **su))
+    failures += _check(msg.startswith("__HTML__:"), "baoxong success uses HTML prefix")
     failures += _check("Đã cập nhật trạng thái" in msg and "OM-1" in msg, "transition success message")
     failures += _check(fake_jira.transitioned_to_done == ["OM-1"], "transition_issue_to_done called once")
     return failures

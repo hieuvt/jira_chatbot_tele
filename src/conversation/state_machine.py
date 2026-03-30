@@ -51,6 +51,20 @@ def _telegram_id_for_assignee_store(*, pending_uid: int | None, bot_user_id: int
 HTML_OUTPUT_PREFIX = "__HTML__:"
 
 
+def _jira_browse_anchor(issue_key: str, jira_base_url: str) -> str:
+    """HTML anchor tới Jira browse; không có base_url thì chỉ escape key."""
+    base = (jira_base_url or "").rstrip("/")
+    escaped_key = html.escape(issue_key)
+    if base:
+        href = html.escape(f"{base}/browse/{issue_key}", quote=True)
+        return f'<a href="{href}">{escaped_key}</a>'
+    return escaped_key
+
+
+def _wrap_html_output(body: str) -> str:
+    return f"{HTML_OUTPUT_PREFIX}{body}"
+
+
 # --- Các trạng thái FSM (bước hỏi / kiểm tra Jira) ---
 
 
@@ -707,11 +721,19 @@ class ConversationStateMachine:
         self._end_session(key)
         return f"{HTML_OUTPUT_PREFIX}{'\n\n'.join(sections)}"
 
-    def _format_mark_done_pick_lines(self, items: list[JiraIssueRecord]) -> str:
-        lines = ["Nhập số thứ tự của task bạn muốn báo hoàn thành:"]
+    def _mark_done_jira_base_url(self) -> str:
+        return str(getattr(self._jira_client, "base_url", "") or "").rstrip("/")
+
+    def _mark_done_list_html_body(self, items: list[JiraIssueRecord]) -> str:
+        base = self._mark_done_jira_base_url()
+        lines = [html.escape("Nhập số thứ tự của task bạn muốn báo hoàn thành:")]
         for i, rec in enumerate(items, start=1):
-            lines.append(f"{i}. {rec.issue_key} — {rec.summary}")
+            anchor = _jira_browse_anchor(rec.issue_key, base)
+            lines.append(f"{i}. {anchor} — {html.escape(rec.summary)}")
         return "\n".join(lines)
+
+    def _format_mark_done_pick_lines(self, items: list[JiraIssueRecord]) -> str:
+        return _wrap_html_output(self._mark_done_list_html_body(items))
 
     def _run_mark_done_list(self, *, buffer: ConversationBuffer, key: tuple[int, int]) -> str:
         assert buffer.sender_jira_account_id
@@ -743,19 +765,26 @@ class ConversationStateMachine:
             "Số thứ tự không hợp lệ. Vui lòng nhập số từ 1 đến {n}.",
         ).format(n=n)
         if not raw.isdigit():
-            return invalid_msg + "\n\n" + self._format_mark_done_pick_lines(buffer.mark_done_candidates)
+            return _wrap_html_output(
+                html.escape(invalid_msg) + "\n\n" + self._mark_done_list_html_body(buffer.mark_done_candidates)
+            )
         idx = int(raw)
         if idx < 1 or idx > n:
-            return invalid_msg + "\n\n" + self._format_mark_done_pick_lines(buffer.mark_done_candidates)
+            return _wrap_html_output(
+                html.escape(invalid_msg) + "\n\n" + self._mark_done_list_html_body(buffer.mark_done_candidates)
+            )
         rec = buffer.mark_done_candidates[idx - 1]
         buffer.mark_done_selected_issue_key = rec.issue_key
         buffer.mark_done_selected_summary = rec.summary
         buffer.state = ConversationState.S16_CONFIRM_MARK_DONE
-        tpl = self._templates.get(
-            "TPL_MARK_DONE_CONFIRM",
-            'Xác nhận báo hoàn thành issue {issue_key}: {summary}? Nhập "Có" để cập nhật Jira, hoặc "Không" để hủy.',
+        base = self._mark_done_jira_base_url()
+        key_a = _jira_browse_anchor(rec.issue_key, base)
+        sum_e = html.escape(rec.summary)
+        confirm_body = (
+            f"Xác nhận báo hoàn thành issue {key_a}: {sum_e}? "
+            f'Nhập "Có" để cập nhật Jira, hoặc "Không" để hủy.'
         )
-        return tpl.format(issue_key=rec.issue_key, summary=rec.summary)
+        return _wrap_html_output(confirm_body)
 
     def _on_mark_done_confirm(self, *, buffer: ConversationBuffer, message: MessageInput, key: tuple[int, int]) -> str:
         if message.has_media or not message.text:
@@ -768,7 +797,9 @@ class ConversationStateMachine:
                 self._end_session(key)
                 return self._map_jira_error(exc)
             self._end_session(key)
-            return f"Đã cập nhật trạng thái issue {issue_key} thành Done trên Jira."
+            base = self._mark_done_jira_base_url()
+            key_a = _jira_browse_anchor(issue_key, base)
+            return _wrap_html_output(f"Đã cập nhật trạng thái issue {key_a} thành Done trên Jira.")
         if is_khong(message.text):
             self._end_session(key)
             return self._tpl("TPL_CANCELLED")
