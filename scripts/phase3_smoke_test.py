@@ -139,6 +139,8 @@ def run_baocao_flow_admin() -> int:
     su = dict(sender_username=tg_sender)
     msg = machine.handle_message(make_text(chat_id, user_id, "/baocao", **su))
 
+    # /baocao trả về multi-message protocol:
+    # "__MULTI_MESSAGE__:" + JSON list[str] (nhiều đoạn báo cáo).
     prefix = "__MULTI_MESSAGE__:"
     failures += _check(msg.startswith(prefix), "baocao uses multi-message prefix")
     if msg.startswith(prefix):

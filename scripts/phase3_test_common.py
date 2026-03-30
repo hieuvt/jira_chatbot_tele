@@ -170,6 +170,9 @@ class FakeUsersStore:
         return True
 
     # --- Methods phục vụ Reporter (Phase 5) ---
+    # Reporter Phase 5 cần 2 hàm này để render:
+    # - get_reverse_mapping(): jira_account_id -> user_name (lowercase @username)
+    # - get_user_record_by_user_name(): cung cấp telegram_display_name/jira_id (nếu có)
 
     def get_reverse_mapping(self) -> dict[str, str]:
         """

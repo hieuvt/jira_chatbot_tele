@@ -51,6 +51,10 @@ def _telegram_id_for_assignee_store(*, pending_uid: int | None, bot_user_id: int
 
 
 HTML_OUTPUT_PREFIX = "__HTML__:"
+# Giao thức "multi message" nội bộ:
+# - state machine trả về chuỗi bắt đầu bằng prefix này
+# - phần còn lại là JSON stringify của `list[str]`
+# - handler sẽ parse JSON và gửi lần lượt từng message
 MULTI_MESSAGE_PREFIX = "__MULTI_MESSAGE__:"
 
 
@@ -340,6 +344,8 @@ class ConversationStateMachine:
                 if sender:
                     buffer.sender_jira_account_id = sender
                     if buffer.intent == Intent.BAOCAO:
+                        # /baocao: chỉ cần biết sender_jira_account_id để check admin,
+                        # không cần check membership như các intent khác.
                         buffer.state = ConversationState.S3_CHECK_SENDER_ADMIN
                     else:
                         buffer.state = ConversationState.S2_CHECK_SENDER_MEMBER
@@ -404,6 +410,8 @@ class ConversationStateMachine:
                         return "Báo cáo chưa sẵn sàng."
                     now = _now_in_tz(self._config.report_timezone)
                     try:
+                        # Reuse logic Phase 5 `Reporter`: build report messages dựa trên
+                        # window_days + phân loại quá hạn / sắp đến hạn / hoàn thành gần đây.
                         message_texts: list[str] = self._reporter.build_report_messages(
                             window_days=self._config.report_window_days,
                             now=now,

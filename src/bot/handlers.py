@@ -112,6 +112,8 @@ async def deliver_conversation_output(
     - Prompt cần gõ chữ trong nhóm: reply_text + ForceReply, lưu message_id để /huy gỡ markup.
     """
     key = (chat_id, user_id)
+    # Khi state machine trả về MULTI_MESSAGE_PREFIX + JSON, handler sẽ
+    # parse JSON và gửi tuần tự nhiều tin nhắn (parse_mode HTML).
     if output.startswith(MULTI_MESSAGE_PREFIX):
         raw = output[len(MULTI_MESSAGE_PREFIX) :]
         last_mid = force_reply_tracker.pop(key, None)
