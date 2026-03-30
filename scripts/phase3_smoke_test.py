@@ -1,4 +1,4 @@
-"""Smoke test state machine (không mạng): luồng /vieccuatoi và /giaoviec.
+"""Smoke test state machine (không mạng): /giaochotoi, /vieccuatoi, /giaoviec, /baoxong.
 
 Usage:
   python scripts/phase3_smoke_test.py
@@ -15,6 +15,7 @@ if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
 from phase3_test_common import build_state_machine, make_attachment, make_reply, make_text
+from src.jira.models import JiraIssueRecord
 
 
 def _check(condition: bool, label: str) -> int:
@@ -25,8 +26,8 @@ def _check(condition: bool, label: str) -> int:
     return 1
 
 
-def run_my_task_flow() -> int:
-    print("[scenario] my_task full flow")
+def run_assign_self_flow() -> int:
+    print("[scenario] giaochotoi (assign self) full flow")
     failures = 0
     chat_id = 2001
     user_id = 5001
@@ -39,7 +40,7 @@ def run_my_task_flow() -> int:
     )
     su = dict(sender_username=tg_sender)
 
-    msg = machine.handle_message(make_text(chat_id, user_id, "/vieccuatoi", **su))
+    msg = machine.handle_message(make_text(chat_id, user_id, "/giaochotoi", **su))
     failures += _check("Nhập tiêu đề công việc" in msg, "ask summary after intent")
 
     msg = machine.handle_message(make_text(chat_id, user_id, "Task smoke phase3", **su))
@@ -69,6 +70,52 @@ def run_my_task_flow() -> int:
     failures += _check(len(fake_jira.created_issue_requests or []) == 1, "create_issue called once")
     failures += _check(len(fake_jira.created_subtask_requests or []) == 1, "create_subtasks called once")
     failures += _check(len(fake_jira.uploaded_payloads or []) == 1, "upload_attachments called once")
+    return failures
+
+
+def run_vieccuatoi_report_flow() -> int:
+    print("[scenario] vieccuatoi report (fake empty lists)")
+    failures = 0
+    chat_id = 2003
+    user_id = 5003
+    sender_jira = "jira-user-5003"
+    tg_sender = "u5003"
+    machine, _, _ = build_state_machine(
+        user_mapping={tg_sender: sender_jira},
+        member_ids={sender_jira},
+        admin_ids=set(),
+    )
+    su = dict(sender_username=tg_sender)
+    msg = machine.handle_message(make_text(chat_id, user_id, "/vieccuatoi", **su))
+    failures += _check(msg.startswith("__HTML__:"), "vieccuatoi returns HTML prefix")
+    failures += _check("Việc của bạn" in msg, "report header present")
+    return failures
+
+
+def run_mark_done_flow() -> int:
+    print("[scenario] baoxong mark done")
+    failures = 0
+    chat_id = 2004
+    user_id = 5004
+    sender_jira = "jira-user-5004"
+    tg_sender = "u5004"
+    machine, fake_jira, _ = build_state_machine(
+        user_mapping={tg_sender: sender_jira},
+        member_ids={sender_jira},
+        admin_ids=set(),
+    )
+    assert fake_jira.incomplete_for_assignee is not None
+    fake_jira.incomplete_for_assignee = [
+        JiraIssueRecord("OM-1", "Task one", None, "To Do", sender_jira, "new"),
+    ]
+    su = dict(sender_username=tg_sender)
+    msg = machine.handle_message(make_text(chat_id, user_id, "/baoxong", **su))
+    failures += _check("Nhập số thứ tự" in msg and "OM-1" in msg, "list incomplete tasks")
+    msg = machine.handle_message(make_text(chat_id, user_id, "1", **su))
+    failures += _check("OM-1" in msg and ("Có" in msg or "có" in msg.lower()), "confirm mark done")
+    msg = machine.handle_message(make_text(chat_id, user_id, "có", **su))
+    failures += _check("Đã cập nhật trạng thái" in msg and "OM-1" in msg, "transition success message")
+    failures += _check(fake_jira.transitioned_to_done == ["OM-1"], "transition_issue_to_done called once")
     return failures
 
 
@@ -133,7 +180,9 @@ def run_assign_task_flow() -> int:
 
 def main() -> int:
     failures = 0
-    failures += run_my_task_flow()
+    failures += run_assign_self_flow()
+    failures += run_vieccuatoi_report_flow()
+    failures += run_mark_done_flow()
     failures += run_assign_task_flow()
     if failures:
         print(f"PHASE 3 SMOKE TEST FAILED with {failures} issue(s)")

@@ -15,7 +15,14 @@ from src.conversation.state_machine import (
     StateMachineConfig,
 )
 from src.conversation.templates import load_template_bundle
-from src.jira.models import AttachmentMeta, IssueCreateRequest, SubtaskCreateRequest
+from src.jira.models import (
+    AttachmentMeta,
+    IssueCreateRequest,
+    JiraIssueRecord,
+    QueryIssuesRequest,
+    QueryRecentlyCompletedRequest,
+    SubtaskCreateRequest,
+)
 
 
 def load_runtime_config(config_path: str = "config/config.json") -> dict[str, Any]:
@@ -40,6 +47,8 @@ class FakeJiraClient:
     created_issue_requests: list[IssueCreateRequest] | None = None
     created_subtask_requests: list[SubtaskCreateRequest] | None = None
     uploaded_payloads: list[tuple[str, list[AttachmentMeta]]] | None = None
+    incomplete_for_assignee: list[JiraIssueRecord] | None = None
+    transitioned_to_done: list[str] | None = None
 
     def __post_init__(self) -> None:
         if self.created_issue_requests is None:
@@ -48,6 +57,10 @@ class FakeJiraClient:
             self.created_subtask_requests = []
         if self.uploaded_payloads is None:
             self.uploaded_payloads = []
+        if self.incomplete_for_assignee is None:
+            self.incomplete_for_assignee = []
+        if self.transitioned_to_done is None:
+            self.transitioned_to_done = []
 
     def check_project_membership(self, jira_account_id: str, project_key: str) -> bool:
         _ = project_key
@@ -77,6 +90,32 @@ class FakeJiraClient:
         assert self.uploaded_payloads is not None
         self.uploaded_payloads.append((issue_key, files))
         return [f"ATT-{i + 1}" for i in range(len(files))]
+
+    def query_issues_by_due_date_for_reporter(
+        self, query: QueryIssuesRequest
+    ) -> dict[str, list[JiraIssueRecord]]:
+        _ = query
+        return {}
+
+    def query_issues_completed_in_window(
+        self, query: QueryRecentlyCompletedRequest
+    ) -> dict[str, list[JiraIssueRecord]]:
+        _ = query
+        return {}
+
+    def query_incomplete_issues_for_assignee(
+        self, project_key: str, assignee_account_id: str, **kwargs: Any
+    ) -> list[JiraIssueRecord]:
+        _ = project_key
+        _ = kwargs
+        if not (assignee_account_id or "").strip():
+            return []
+        assert self.incomplete_for_assignee is not None
+        return list(self.incomplete_for_assignee)
+
+    def transition_issue_to_done(self, issue_key: str) -> None:
+        assert self.transitioned_to_done is not None
+        self.transitioned_to_done.append(issue_key)
 
 
 def _fake_username_key(raw: str) -> str:

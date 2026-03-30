@@ -265,6 +265,88 @@ class JiraClient:
         escaped_assignee = assignee_account_id.replace("\\", "\\\\").replace('"', '\\"')
         return f'{base_jql} AND assignee = "{escaped_assignee}"'
 
+    def query_incomplete_issues_for_assignee(
+        self,
+        project_key: str,
+        assignee_account_id: str,
+        *,
+        max_results: int = 50,
+        max_pages: int = 20,
+    ) -> list[JiraIssueRecord]:
+        """Issue trong project gán cho assignee, status category chưa Done (JQL + search/jql)."""
+        assignee = (assignee_account_id or "").strip()
+        if not assignee:
+            return []
+        escaped_assignee = assignee.replace("\\", "\\\\").replace('"', '\\"')
+        jql = (
+            f'project = "{project_key}" AND assignee = "{escaped_assignee}" '
+            f"AND statusCategory != Done ORDER BY updated DESC"
+        )
+        out: list[JiraIssueRecord] = []
+        start_at = 0
+        for _ in range(max_pages):
+            params = {
+                "jql": jql,
+                "fields": "summary,assignee,duedate,status,project,issuetype",
+                "startAt": str(start_at),
+                "maxResults": str(max_results),
+            }
+            response = self._request_json("GET", "/rest/api/3/search/jql", params=params)
+            issues = response.get("issues", [])
+            if not isinstance(issues, list):
+                break
+            for issue in issues:
+                record = self._to_issue_record(issue)
+                if (record.status_category_key or "").strip().lower() == "done":
+                    continue
+                if record.issue_key:
+                    out.append(record)
+            total = int(response.get("total", 0))
+            start_at += max_results
+            if start_at >= total or not issues:
+                break
+        return out
+
+    def transition_issue_to_done(self, issue_key: str) -> None:
+        """GET transitions, chọn transition có to.statusCategory = done, rồi POST."""
+        key = (issue_key or "").strip()
+        if not key:
+            raise JiraClientError(
+                code="JIRA_BAD_REQUEST",
+                message="Issue key is required.",
+                context={},
+                retriable=False,
+            )
+        path_trans = f"/rest/api/3/issue/{parse.quote(key)}/transitions"
+        data = self._request_json("GET", path_trans)
+        transitions = data.get("transitions", [])
+        if not isinstance(transitions, list):
+            transitions = []
+        transition_id: str | None = None
+        for tr in transitions:
+            if not isinstance(tr, dict):
+                continue
+            to_obj = tr.get("to", {})
+            if not isinstance(to_obj, dict):
+                continue
+            st_cat = to_obj.get("statusCategory", {})
+            if not isinstance(st_cat, dict):
+                continue
+            cat_key = str(st_cat.get("key", "")).strip().lower()
+            if cat_key == "done":
+                tid = str(tr.get("id", "")).strip()
+                if tid:
+                    transition_id = tid
+                    break
+        if not transition_id:
+            raise JiraClientError(
+                code="JIRA_NO_DONE_TRANSITION",
+                message="No workflow transition to Done is available for this issue.",
+                context={"issue_key": key},
+                retriable=False,
+            )
+        self._request_json("POST", path_trans, payload={"transition": {"id": transition_id}})
+
     # --- Nội bộ: quyền bot, role actors, HTTP, lỗi, ADF, multipart ---
 
     def _ensure_bot_has_project_permission(self, project_key: str, permission_key: str) -> None:

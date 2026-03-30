@@ -88,6 +88,8 @@ def _needs_user_reply(output: str) -> bool:
         "Bạn có muốn thêm checklist",
         "Nhập số ngày cần hoàn thành",
         "Xác nhận tạo công việc",
+        "Nhập số thứ tự của task bạn muốn báo hoàn thành",
+        "Xác nhận báo hoàn thành issue",
     )
     return any(m in output for m in markers)
 

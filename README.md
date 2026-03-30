@@ -1,11 +1,13 @@
 # Jira Chatbot Telegram
 
-Bot Telegram kết nối **Jira Cloud** để tạo việc (issue + sub-task checklist + file đính kèm), lưu mapping người dùng Telegram ↔ Jira, và gửi **báo cáo định kỳ** theo hạn hoàn thành (sắp đến hạn / quá hạn) vào nhóm đã cấu hình.
+Bot Telegram kết nối **Jira Cloud** để tạo việc (issue + sub-task checklist + file đính kèm), báo hoàn thành task (transition sang Done), lưu mapping người dùng Telegram ↔ Jira, và gửi **báo cáo định kỳ** theo hạn hoàn thành (sắp đến hạn / quá hạn) vào nhóm đã cấu hình.
 
 ## Tính năng chính
 
 - **Giao việc** (`/giaoviec`): Admin project trên Jira mới được giao cho người khác; chọn assignee (reply / @mention / nhập `jira_account_id`), nhập summary, mô tả, file (tuỳ chọn), checklist (tuỳ chọn), số ngày due, xác nhận tạo issue trên Jira.
-- **Việc của tôi** (`/vieccuatoi`): Tạo việc gán cho chính mình (luồng tương tự, không cần quyền admin project).
+- **Việc của tôi** (`/vieccuatoi`): Xem tóm tắt issue được gán cho bạn trong project (quá hạn, sắp đến hạn, hoàn thành gần đây).
+- **Giao cho tôi** (`/giaochotoi`): Tự tạo task gán cho chính mình (wizard giống giao việc, không cần quyền admin project).
+- **Báo hoàn thành** (`/baoxong` hoặc `/baohoanthanh`): Bot liệt kê issue trong project được gán cho bạn còn trạng thái chưa Done; bạn nhập số thứ tự, xác nhận **Có** để bot gọi Jira chuyển issue sang Done.
 - **Hủy phiên**: `/huy` hoặc `/cancel` trong lúc đang điền form.
 - **Hướng dẫn nhanh** (`/huongdan` hoặc `/help`): Trả về message cố định mô tả điều kiện sử dụng và danh sách lệnh.
 - **Báo cáo định kỳ**: Theo `due.notification.report_times` và timezone trong config; gửi vào chat đầu tiên trong `allowed_chat_ids`.
@@ -72,6 +74,7 @@ Nếu thấy log `Application started` là bot đã polling thành công.
 1. **Tài khoản service** (email + [API token](https://id.atlassian.com/manage-profile/security/api-tokens)) dùng cho bot — không dùng token cá nhân của từng nhân viên cho thao tác bot.
 2. **Quyền trên project** (`project_key` trong config):
   - Bot cần ít nhất quyền tương đương **Browse project** và **Create issues** (và quyền gán assignee / tạo sub-task theo cấu hình workflow của bạn).
+  - Với **báo hoàn thành** (`/baoxong`, `/baohoanthanh`), tài khoản bot cần được phép **transition** issue sang trạng thái thuộc category Done trong workflow (tương đương quyền chỉnh sửa / luân chuyển việc trên project).
   - Kiểm tra **membership**: user được giao việc phải là thành viên project (xuất hiện trong role actors của project).
 3. **Admin project (chỉ cho `/giaoviec`)**
   Bot xác định “được giao việc cho người khác” nếu user đó thuộc **một project role có tên chứa `admin`** (không phân biệt hoa thường). Cấu hình role trên Jira cho đúng người được phép giao việc.

@@ -32,6 +32,7 @@ from src.conversation.validators import (
 from src.jira.models import (
     AttachmentMeta,
     IssueCreateRequest,
+    JiraIssueRecord,
     QueryIssuesRequest,
     QueryRecentlyCompletedRequest,
     SubtaskCreateRequest,
@@ -57,6 +58,7 @@ class ConversationState(str, Enum):
     S0_START_ASSIGN = "S0_START_ASSIGN"
     S0_START_ASSIGN_SELF = "S0_START_ASSIGN_SELF"
     S0_START_MY_TASK = "S0_START_MY_TASK"
+    S0_START_MARK_DONE = "S0_START_MARK_DONE"
     S1_ASK_SENDER_JIRA_ID = "S1_ASK_SENDER_JIRA_ID"
     S2_CHECK_SENDER_MEMBER = "S2_CHECK_SENDER_MEMBER"
     S3_CHECK_SENDER_ADMIN = "S3_CHECK_SENDER_ADMIN"
@@ -70,6 +72,9 @@ class ConversationState(str, Enum):
     S11_CONFIRM = "S11_CONFIRM"
     S12_CREATE = "S12_CREATE"
     S13_QUERY_MY_TASK = "S13_QUERY_MY_TASK"
+    S14_LIST_INCOMPLETE_TASKS = "S14_LIST_INCOMPLETE_TASKS"
+    S15_ASK_TASK_INDEX = "S15_ASK_TASK_INDEX"
+    S16_CONFIRM_MARK_DONE = "S16_CONFIRM_MARK_DONE"
 
 
 @dataclass
@@ -130,6 +135,9 @@ class ConversationBuffer:
     checklist_items: list[str] = field(default_factory=list)
     due_days: int | None = None
     attachments: list[FileMeta] = field(default_factory=list)
+    mark_done_candidates: list[JiraIssueRecord] = field(default_factory=list)
+    mark_done_selected_issue_key: str | None = None
+    mark_done_selected_summary: str | None = None
     started_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
@@ -192,7 +200,12 @@ class ConversationStateMachine:
             route = resolve_intent(message.text or "", intent_aliases=self._intent_aliases)
             if route.intent == Intent.HELP:
                 return self._tpl("TPL_HELP")
-            if route.intent in {Intent.ASSIGN_TASK, Intent.ASSIGN_TASK_SELF, Intent.MY_TASK}:
+            if route.intent in {
+                Intent.ASSIGN_TASK,
+                Intent.ASSIGN_TASK_SELF,
+                Intent.MY_TASK,
+                Intent.MARK_TASK_DONE,
+            }:
                 self._end_session(key)
                 return self._start_new_session(message=message, intent=route.intent)
             existing.touch()
@@ -221,6 +234,14 @@ class ConversationStateMachine:
                 chat_id=message.chat_id,
                 user_id=message.user_id,
                 state=ConversationState.S0_START_ASSIGN_SELF,
+                sender_username=message.sender_username,
+            )
+        elif intent == Intent.MARK_TASK_DONE:
+            buffer = ConversationBuffer(
+                intent=intent,
+                chat_id=message.chat_id,
+                user_id=message.user_id,
+                state=ConversationState.S0_START_MARK_DONE,
                 sender_username=message.sender_username,
             )
         else:
@@ -253,6 +274,10 @@ class ConversationStateMachine:
             return self._on_due_days(buffer=buffer, message=message)
         if buffer.state == ConversationState.S11_CONFIRM:
             return self._on_confirm(buffer=buffer, message=message, key=key)
+        if buffer.state == ConversationState.S15_ASK_TASK_INDEX:
+            return self._on_mark_done_task_index(buffer=buffer, message=message, key=key)
+        if buffer.state == ConversationState.S16_CONFIRM_MARK_DONE:
+            return self._on_mark_done_confirm(buffer=buffer, message=message, key=key)
         return self._tpl("TPL_UNKNOWN_INTENT")
 
     def _run_non_interactive_states(self, *, buffer: ConversationBuffer, key: tuple[int, int]) -> str:
@@ -262,6 +287,7 @@ class ConversationStateMachine:
                 ConversationState.S0_START_ASSIGN,
                 ConversationState.S0_START_ASSIGN_SELF,
                 ConversationState.S0_START_MY_TASK,
+                ConversationState.S0_START_MARK_DONE,
             }:
                 sender = None
                 if buffer.sender_username:
@@ -286,7 +312,7 @@ class ConversationStateMachine:
                     return self._map_jira_error(exc)
                 if not is_member:
                     self._end_session(key)
-                    if buffer.intent == Intent.MY_TASK:
+                    if buffer.intent in {Intent.MY_TASK, Intent.MARK_TASK_DONE}:
                         return self._tpl("TPL_ASSIGNEE_NOT_MEMBER")
                     return self._tpl("TPL_NOT_PROJECT_MEMBER")
                 if buffer.intent == Intent.MY_TASK:
@@ -297,6 +323,15 @@ class ConversationStateMachine:
                             telegram_id=str(buffer.user_id),
                         )
                     buffer.state = ConversationState.S13_QUERY_MY_TASK
+                    continue
+                if buffer.intent == Intent.MARK_TASK_DONE:
+                    if buffer.sender_username:
+                        self._users_store.upsert_mapping(
+                            buffer.sender_username,
+                            buffer.sender_jira_account_id,
+                            telegram_id=str(buffer.user_id),
+                        )
+                    buffer.state = ConversationState.S14_LIST_INCOMPLETE_TASKS
                     continue
                 if buffer.intent == Intent.ASSIGN_TASK_SELF:
                     buffer.assignee_jira_account_id = buffer.sender_jira_account_id
@@ -342,6 +377,8 @@ class ConversationStateMachine:
                 return self._create_jira_issue(buffer=buffer, key=key)
             if buffer.state == ConversationState.S13_QUERY_MY_TASK:
                 return self._query_my_tasks(buffer=buffer, key=key)
+            if buffer.state == ConversationState.S14_LIST_INCOMPLETE_TASKS:
+                return self._run_mark_done_list(buffer=buffer, key=key)
 
             return self._tpl("TPL_UNKNOWN_INTENT")
 
@@ -670,6 +707,73 @@ class ConversationStateMachine:
         self._end_session(key)
         return f"{HTML_OUTPUT_PREFIX}{'\n\n'.join(sections)}"
 
+    def _format_mark_done_pick_lines(self, items: list[JiraIssueRecord]) -> str:
+        lines = ["Nhập số thứ tự của task bạn muốn báo hoàn thành:"]
+        for i, rec in enumerate(items, start=1):
+            lines.append(f"{i}. {rec.issue_key} — {rec.summary}")
+        return "\n".join(lines)
+
+    def _run_mark_done_list(self, *, buffer: ConversationBuffer, key: tuple[int, int]) -> str:
+        assert buffer.sender_jira_account_id
+        try:
+            items = self._jira_client.query_incomplete_issues_for_assignee(
+                self._config.project_key,
+                buffer.sender_jira_account_id,
+            )
+        except JiraClientError as exc:
+            self._end_session(key)
+            return self._map_jira_error(exc)
+        if not items:
+            self._end_session(key)
+            return self._tpl("TPL_NO_INCOMPLETE_TASKS")
+        buffer.mark_done_candidates = items
+        buffer.state = ConversationState.S15_ASK_TASK_INDEX
+        return self._format_mark_done_pick_lines(items)
+
+    def _on_mark_done_task_index(self, *, buffer: ConversationBuffer, message: MessageInput, key: tuple[int, int]) -> str:
+        if not buffer.mark_done_candidates:
+            self._end_session(key)
+            return self._tpl("TPL_UNKNOWN_INTENT")
+        if message.has_media or not message.text or not message.text.strip():
+            return self._format_mark_done_pick_lines(buffer.mark_done_candidates)
+        raw = message.text.strip()
+        n = len(buffer.mark_done_candidates)
+        invalid_msg = self._templates.get(
+            "TPL_MARK_DONE_INVALID_INDEX",
+            "Số thứ tự không hợp lệ. Vui lòng nhập số từ 1 đến {n}.",
+        ).format(n=n)
+        if not raw.isdigit():
+            return invalid_msg + "\n\n" + self._format_mark_done_pick_lines(buffer.mark_done_candidates)
+        idx = int(raw)
+        if idx < 1 or idx > n:
+            return invalid_msg + "\n\n" + self._format_mark_done_pick_lines(buffer.mark_done_candidates)
+        rec = buffer.mark_done_candidates[idx - 1]
+        buffer.mark_done_selected_issue_key = rec.issue_key
+        buffer.mark_done_selected_summary = rec.summary
+        buffer.state = ConversationState.S16_CONFIRM_MARK_DONE
+        tpl = self._templates.get(
+            "TPL_MARK_DONE_CONFIRM",
+            'Xác nhận báo hoàn thành issue {issue_key}: {summary}? Nhập "Có" để cập nhật Jira, hoặc "Không" để hủy.',
+        )
+        return tpl.format(issue_key=rec.issue_key, summary=rec.summary)
+
+    def _on_mark_done_confirm(self, *, buffer: ConversationBuffer, message: MessageInput, key: tuple[int, int]) -> str:
+        if message.has_media or not message.text:
+            return self._tpl("TPL_INVALID_CONFIRM")
+        if is_co(message.text):
+            issue_key = buffer.mark_done_selected_issue_key or ""
+            try:
+                self._jira_client.transition_issue_to_done(issue_key)
+            except JiraClientError as exc:
+                self._end_session(key)
+                return self._map_jira_error(exc)
+            self._end_session(key)
+            return f"Đã cập nhật trạng thái issue {issue_key} thành Done trên Jira."
+        if is_khong(message.text):
+            self._end_session(key)
+            return self._tpl("TPL_CANCELLED")
+        return self._tpl("TPL_INVALID_CONFIRM")
+
     def _create_jira_issue(self, *, buffer: ConversationBuffer, key: tuple[int, int]) -> str:
         """Gọi Jira: issue chính, sub-task checklist, upload file; kết thúc phiên."""
         assert buffer.summary and buffer.description and buffer.assignee_jira_account_id and buffer.due_days
@@ -757,6 +861,11 @@ class ConversationStateMachine:
             return "Jira đang giới hạn tần suất. Vui lòng thử lại sau ít phút."
         if error.code == "JIRA_NOT_FOUND":
             return "Cấu hình Jira chưa đúng hoặc tài nguyên không tồn tại. Vui lòng báo quản trị viên kiểm tra project/issue type."
+        if error.code == "JIRA_NO_DONE_TRANSITION":
+            return (
+                "Không có chuyển trạng thái sang Done khả dụng cho issue này trên Jira "
+                "(workflow hoặc quyền transition). Vui lòng kiểm tra Jira hoặc quyền tài khoản bot."
+            )
         if error.code in {"JIRA_SERVER_ERROR", "JIRA_HTTP_ERROR", "JIRA_INVALID_JSON", "JIRA_UNKNOWN_ERROR"}:
             return "Đã có lỗi khi tạo công việc trên Jira. Vui lòng thử lại sau."
         return "Đã có lỗi khi tạo công việc trên Jira. Vui lòng thử lại sau."

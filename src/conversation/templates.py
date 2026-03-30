@@ -20,6 +20,7 @@ DEFAULT_INTENT_ALIASES: dict[str, list[str]] = {
     "ASSIGN_TASK": ["giao việc", "/giao việc", "/giaoviec", "@bot giao việc"],
     "ASSIGN_TASK_SELF": ["/giaochotoi", "giao cho tôi", "/giao cho tôi", "@bot giao cho tôi"],
     "MY_TASK": ["/vieccuatoi", "việc của tôi", "/việc của tôi", "@bot việc của tôi"],
+    "MARK_TASK_DONE": ["/baoxong", "/baohoanthanh"],
 }
 
 

@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import Enum
 
+from src.conversation.validators import _normalize_slash_command_token
+
 
 class Intent(str, Enum):
     """Các intent hội thoại được hỗ trợ."""
@@ -12,6 +14,7 @@ class Intent(str, Enum):
     ASSIGN_TASK = "ASSIGN_TASK"
     ASSIGN_TASK_SELF = "ASSIGN_TASK_SELF"
     MY_TASK = "MY_TASK"
+    MARK_TASK_DONE = "MARK_TASK_DONE"
     HELP = "HELP"
     UNKNOWN = "UNKNOWN"
 
@@ -29,13 +32,14 @@ DEFAULT_INTENT_ALIASES: dict[Intent, list[str]] = {
     Intent.ASSIGN_TASK: ["/giaoviec"],
     Intent.ASSIGN_TASK_SELF: ["/giaochotoi"],
     Intent.MY_TASK: ["/vieccuatoi"],
+    Intent.MARK_TASK_DONE: ["/baoxong", "/baohoanthanh"],
     Intent.HELP: ["/huongdan", "/help"],
 }
 
 
 def _normalize_for_intent(message_text: str) -> str:
-    """Chuẩn hoá text: trim + lower để so khớp alias."""
-    return message_text.strip().lower()
+    """Chuẩn hoá text: trim + lower; với lệnh `/...` bỏ hậu tố `@bot` (nhóm Telegram)."""
+    return _normalize_slash_command_token(message_text)
 
 
 def _normalize_alias_map(intent_aliases: dict[str, list[str]] | None) -> dict[Intent, list[str]]:

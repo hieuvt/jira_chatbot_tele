@@ -2,6 +2,18 @@
 
 Format dựa trên [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [2026-03-30]
+
+### Added
+- Lệnh **báo hoàn thành** `/baoxong` và `/baohoanthanh` (intent `MARK_TASK_DONE`): luồng giống `/vieccuatoi` cho liên kết user Jira; liệt kê issue assignee = user còn chưa Done; chọn số và xác nhận Có/Không; bot gọi Jira REST transition sang Done.
+- `JiraClient.query_incomplete_issues_for_assignee` và `JiraClient.transition_issue_to_done`.
+- Template `TPL_NO_INCOMPLETE_TASKS`, `TPL_MARK_DONE_INVALID_INDEX`, `TPL_MARK_DONE_CONFIRM`; cập nhật `TPL_HELP`, `TPL_UNKNOWN_INTENT` và alias trong `config/templates.json`.
+- Chuẩn hoá lệnh `/...@BotName` khi so khớp intent (nhóm Telegram).
+
+### Changed
+- `README.md`: mô tả tính năng báo hoàn thành, quyền transition trên Jira; làm rõ `/vieccuatoi` (xem việc) vs `/giaochotoi` (tự tạo task).
+- `scripts/phase3_test_common.py`: `FakeJiraClient` hỗ trợ search/transition và stub query due/completed; `phase3_smoke_test.py` sửa scenario `/giaochotoi`, thêm kiểm `/vieccuatoi` và `/baoxong`.
+
 ## [2026-03-27]
 
 ### Added
