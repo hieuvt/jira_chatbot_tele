@@ -108,6 +108,7 @@ File thật **không commit** (đã có trong `.gitignore`). Sao chép từ `[co
 | `jira.http` (tuỳ chọn)           | `timeout_seconds`, `retry_count`, `retry_backoff_seconds`                                                                                          |
 | `due.notification`               | `window_days`, `report_timezone`, `report_times` (báo cáo định kỳ)                                                                                 |
 | `conversation.timeout_minutes`   | Hết hạn phiên hội thoại nếu không tương tác                                                                                                        |
+| `llm`                            | Bật Gemini làm thơ động viên (sau khi hoàn tất lệnh và sau báo cáo định kỳ)                                                                         |
 
 
 Chạy bot từ **thư mục gốc repo**:
@@ -171,6 +172,36 @@ Unregister-ScheduledTask -TaskName "JiraTelegramBot" -Confirm:$false
 - Mặc định có thêm intent trợ giúp với alias: `/huongdan`, `/help` (`HELP` -> `TPL_HELP`).
 
 File mẫu: `[config/templates.json](config/templates.json)`.
+
+## Thơ động viên (Gemini)
+
+Bot có thể gửi thêm **1 bài thơ lục bát 4 câu** để động viên sau khi hoàn tất các intent chính và sau khi gửi **báo cáo định kỳ**.
+
+### 1. Cấu hình trong `config/config.json`
+
+Thêm block `llm` (xem `[config/config.example.json](config/config.example.json)`):
+
+- `llm.enabled`: bật/tắt tính năng (mặc định `true`)
+- `llm.timeout_seconds`: timeout gọi Gemini
+- `llm.prompts.encourage_poem_path`: đường dẫn file prompt Markdown (mặc định `config/prompts/encourage_poem_lucbat.md`)
+- `llm.gemini.base_url`, `llm.gemini.api_version`, `llm.gemini.model`, `llm.gemini.api_key`
+
+### 2. Prompt Markdown (editable)
+
+File mặc định: `[config/prompts/encourage_poem_lucbat.md](config/prompts/encourage_poem_lucbat.md)`.
+Bạn có thể chỉnh nội dung prompt để đổi giọng thơ/nội dung, miễn đảm bảo output đúng **4 dòng**.
+
+### 3. Smoke test nhanh
+
+- Chạy bot local: `python src/bot/entrypoint.py`
+- Thử các luồng (sau khi hoàn tất sẽ có thêm 1 tin thơ):
+  - `/giaochotoi` tạo task thành công
+  - `/baoxong` → chọn 1 issue → trả lời `Có`
+  - `/vieccuatoi`
+  - `/baocao` (cần quyền admin project)
+- Test báo cáo định kỳ:
+  - Set `due.notification.report_times` gần thời điểm hiện tại và chờ job chạy
+  - Sau khi báo cáo gửi xong sẽ có thêm 1 tin thơ
 
 ## Dữ liệu cục bộ: `data/users.json`
 

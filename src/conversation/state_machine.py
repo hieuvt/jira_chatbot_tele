@@ -212,6 +212,7 @@ class ConversationStateMachine:
         config: StateMachineConfig,
         intent_aliases: dict[str, list[str]] | None = None,
         reporter: object | None = None,
+        poem_service: object | None = None,
     ) -> None:
         self._jira_client = jira_client
         self._users_store = users_store
@@ -219,6 +220,7 @@ class ConversationStateMachine:
         self._config = config
         self._intent_aliases = intent_aliases or {}
         self._reporter = reporter
+        self._poem_service = poem_service
         self._sessions: dict[tuple[int, int], ConversationBuffer] = {}
 
     def handle_message(self, message: MessageInput) -> str:
@@ -419,6 +421,9 @@ class ConversationStateMachine:
                     except JiraClientError as exc:
                         self._end_session(key)
                         return self._map_jira_error(exc)
+                    poem = self._make_poem(context="Hoàn tất gửi báo cáo theo yêu cầu (/baocao).")
+                    if poem:
+                        message_texts.append(html.escape(poem))
                     self._end_session(key)
                     payload = json.dumps(message_texts, ensure_ascii=False)
                     return f"{MULTI_MESSAGE_PREFIX}{payload}"
@@ -779,7 +784,8 @@ class ConversationStateMachine:
         if not overdue_lines and not upcoming_lines and not done_lines:
             sections.append("Hiện không có công việc quá hạn, sắp đến hạn hoặc vừa hoàn thành.")
         self._end_session(key)
-        return f"{HTML_OUTPUT_PREFIX}{'\n\n'.join(sections)}"
+        output = f"{HTML_OUTPUT_PREFIX}{'\n\n'.join(sections)}"
+        return self._maybe_attach_poem(intent=buffer.intent, output=output)
 
     def _mark_done_jira_base_url(self) -> str:
         return str(getattr(self._jira_client, "base_url", "") or "").rstrip("/")
@@ -859,7 +865,8 @@ class ConversationStateMachine:
             self._end_session(key)
             base = self._mark_done_jira_base_url()
             key_a = _jira_browse_anchor(issue_key, base)
-            return _wrap_html_output(f"Đã cập nhật trạng thái issue {key_a} thành Done trên Jira.")
+            output = _wrap_html_output(f"Đã cập nhật trạng thái issue {key_a} thành Done trên Jira.")
+            return self._maybe_attach_poem(intent=buffer.intent, output=output)
         if is_khong(message.text):
             self._end_session(key)
             return self._tpl("TPL_CANCELLED")
@@ -907,12 +914,13 @@ class ConversationStateMachine:
             self._end_session(key)
             # Telegram tự động biến URL thành link click được.
             issue_url = f"{self._jira_client.base_url}/browse/{issue_key}" if getattr(self._jira_client, "base_url", None) else None
-            return (
+            output = (
                 f"Tạo công việc thành công: {issue_key}\n"
                 f"{f'Link Jira: {issue_url}\n' if issue_url else ''}"
                 f"Số checklist items: {len(subtask_keys)}\n"
                 f"Số file upload: {len(uploaded_ids)}"
             )
+            return self._maybe_attach_poem(intent=buffer.intent, output=output)
         except JiraClientError as exc:
             self._end_session(key)
             return self._map_jira_error(exc)
@@ -974,6 +982,34 @@ class ConversationStateMachine:
     def _tpl(self, key: str) -> str:
         """Lấy câu trả lời theo key TPL_*; thiếu key thì trả về chính key."""
         return self._templates.get(key, key)
+
+    def _make_poem(self, *, context: str) -> str | None:
+        svc = getattr(self, "_poem_service", None)
+        fn = getattr(svc, "make_encouragement_poem", None)
+        if not callable(fn):
+            return None
+        try:
+            return fn(context=context)
+        except Exception:
+            return None
+
+    def _maybe_attach_poem(self, *, intent: Intent, output: str) -> str:
+        """
+        Nếu có poem_service thì trả về multi-message (HTML parse mode) gồm:
+        - message gốc (giữ HTML nếu output có prefix __HTML__)
+        - poem (escape để an toàn với parse_mode HTML)
+        """
+        poem = self._make_poem(context=f"Hoàn tất intent: {intent.value}.")
+        if not poem:
+            return output
+
+        message_html: str
+        if output.startswith(HTML_OUTPUT_PREFIX):
+            message_html = output[len(HTML_OUTPUT_PREFIX) :]
+        else:
+            message_html = html.escape(output)
+        payload = json.dumps([message_html, html.escape(poem)], ensure_ascii=False)
+        return f"{MULTI_MESSAGE_PREFIX}{payload}"
 
 
 def build_filename(kind: str, mime_type: str | None, timestamp: int) -> str:

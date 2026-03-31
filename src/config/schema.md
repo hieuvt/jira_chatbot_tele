@@ -28,3 +28,12 @@
 ## conversation
 - `timeout_minutes`: conversation timeout in minutes (default `10`).
 
+## llm (Gemini)
+- `enabled` (default `true`): bật/tắt tính năng gọi LLM.
+- `timeout_seconds` (default `20`): timeout gọi LLM.
+- `prompts.encourage_poem_path`: đường dẫn file Markdown prompt làm thơ động viên.
+- `gemini.base_url` (default `https://generativelanguage.googleapis.com`)
+- `gemini.api_version` (default `v1beta`)
+- `gemini.model` (ví dụ `gemini-2.0-flash`)
+- `gemini.api_key`: API key Gemini.
+

@@ -23,6 +23,8 @@ from src.common.errors import JiraClientError
 from src.conversation.state_machine import ConversationStateMachine, StateMachineConfig
 from src.conversation.templates import load_template_bundle
 from src.jira.client import JiraClient
+from src.llm.gemini_client import GeminiClient, GeminiConfig
+from src.llm.poem_service import PoemService, PoemServiceConfig
 from src.reports.reporter import Reporter
 from src.scheduler.jobs import build_scheduler, configure_phase5_report_jobs
 from src.storage.users_store import UsersStore
@@ -93,12 +95,15 @@ def bootstrap_app() -> dict[str, Any]:
         completed_status_names=[str(x).strip() for x in completed_status_names if str(x).strip()],
     )
 
+    poem_service = _build_poem_service(runtime=runtime)
+
     state_machine = ConversationStateMachine(
         jira_client=jira_client,
         users_store=users_store,
         templates=template_bundle.bot_replies,
         intent_aliases=template_bundle.intent_aliases,
         reporter=reporter,
+        poem_service=poem_service,
         config=StateMachineConfig(
             project_key=str(jira["project_key"]),
             issue_type_id=str(jira["issue_type_id"]),
@@ -150,6 +155,17 @@ def bootstrap_app() -> dict[str, Any]:
             message_texts = reporter.build_report_messages(window_days=window_days, now=now)
             reporter.send_report(telegram_chat_id=telegram_chat_id_first, message_texts=message_texts)
             logger.info("Phase5 report sent trace_id=%s messages=%d", trace_id, len(message_texts))
+            if poem_service is not None:
+                poem = poem_service.make_encouragement_poem(
+                    context="Hoàn tất gửi báo cáo định kỳ theo lịch tự động."
+                )
+                if poem:
+                    import html as _html
+
+                    reporter.send_report(
+                        telegram_chat_id=telegram_chat_id_first,
+                        message_texts=[_html.escape(poem)],
+                    )
         except JiraClientError:
             logger.exception("Phase5: Jira error trace_id=%s", trace_id)
             try:
@@ -178,6 +194,36 @@ def bootstrap_app() -> dict[str, Any]:
     logger.info("Scheduler started (Phase5)")
 
     return {"logger": logger, "application": application, "scheduler": scheduler}
+
+
+def _build_poem_service(*, runtime: dict[str, Any]) -> PoemService | None:
+    llm = runtime.get("llm", {}) if isinstance(runtime.get("llm"), dict) else {}
+    enabled = bool(llm.get("enabled", True))
+    if not enabled:
+        return None
+    prompts = llm.get("prompts", {}) if isinstance(llm.get("prompts"), dict) else {}
+    prompt_path_raw = str(prompts.get("encourage_poem_path", "")).strip()
+    if not prompt_path_raw:
+        return None
+    prompt_path = str((project_root / prompt_path_raw).resolve())
+
+    gem = llm.get("gemini", {}) if isinstance(llm.get("gemini"), dict) else {}
+    api_key = str(gem.get("api_key", "")).strip()
+    base_url = str(gem.get("base_url", "https://generativelanguage.googleapis.com")).strip()
+    api_version = str(gem.get("api_version", "v1beta")).strip()
+    model = str(gem.get("model", "gemini-2.0-flash")).strip()
+    timeout_seconds = int(llm.get("timeout_seconds", 20))
+
+    gemini = GeminiClient(
+        GeminiConfig(
+            base_url=base_url,
+            api_version=api_version,
+            model=model,
+            api_key=api_key,
+            timeout_seconds=timeout_seconds,
+        )
+    )
+    return PoemService(cfg=PoemServiceConfig(enabled=True, prompt_path=prompt_path), gemini=gemini)
 
 
 def main() -> None:
