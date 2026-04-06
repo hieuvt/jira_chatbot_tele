@@ -143,6 +143,9 @@ def configure_phase5_report_jobs(
             timezone=timezone,
             id=job_id,
             replace_existing=True,
+            # Prevent overlapping executions if a send takes longer than expected.
+            max_instances=1,
+            coalesce=True,
         )
 
 

@@ -92,7 +92,9 @@ class Reporter:
         self.jira_client = jira_client
         self.users_store = users_store
         self.project_key = project_key
-        self._bot = Bot(token=bot_token)
+        # Important: do NOT re-use a single telegram.Bot instance across multiple
+        # asyncio.run() calls. Each send uses its own event-loop lifecycle.
+        self._bot_token = bot_token
         self.logger = logger
         self._lookback_hours = lookback_hours
         self._completed_status_names: list[str] = (
@@ -278,9 +280,11 @@ class Reporter:
 
     async def _send_messages_async(self, *, telegram_chat_id: int, message_texts: list[str]) -> None:
         """Gửi tuần tự từng tin với parse_mode HTML."""
+        # Create a fresh Bot per send invocation to avoid cross-event-loop side effects.
+        bot = Bot(token=self._bot_token)
         for idx, text in enumerate(message_texts):
             try:
-                await self._bot.send_message(chat_id=telegram_chat_id, text=text, parse_mode="HTML")
+                await bot.send_message(chat_id=telegram_chat_id, text=text, parse_mode="HTML")
             except Exception as exc:
                 raise
 

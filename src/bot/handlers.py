@@ -2,16 +2,57 @@
 
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime, timezone
 import json
+from typing import Any, Coroutine, TypeVar
 
 from telegram import ForceReply, Message, Update, User
+from telegram.constants import ChatAction
 from telegram.error import TelegramError
 from telegram.ext import Application, ContextTypes, MessageHandler, filters
 
 from src.conversation.state_machine import FileMeta, MessageInput, build_filename, MULTI_MESSAGE_PREFIX
 
 HTML_OUTPUT_PREFIX = "__HTML__:"
+
+_T = TypeVar("_T")
+
+
+async def _typing_keepalive(*, bot: Any, chat_id: int, work: Coroutine[Any, Any, _T]) -> _T:
+    """
+    Gửi ChatAction.TYPING lặp lại trong lúc chờ `work` (Telegram chỉ giữ typing ~5s mỗi lần).
+    """
+    try:
+        await bot.send_chat_action(chat_id=chat_id, action=ChatAction.TYPING)
+    except TelegramError:
+        pass
+
+    stop = asyncio.Event()
+
+    async def _tick_loop() -> None:
+        while not stop.is_set():
+            try:
+                await asyncio.wait_for(stop.wait(), timeout=4.5)
+            except asyncio.TimeoutError:
+                pass
+            if stop.is_set():
+                break
+            try:
+                await bot.send_chat_action(chat_id=chat_id, action=ChatAction.TYPING)
+            except TelegramError:
+                pass
+
+    tick = asyncio.create_task(_tick_loop())
+    try:
+        return await work
+    finally:
+        stop.set()
+        tick.cancel()
+        try:
+            await tick
+        except asyncio.CancelledError:
+            pass
 
 
 def _telegram_username_or_none(user: User | None) -> str | None:
@@ -275,60 +316,65 @@ def register_handlers(
             return
 
         tg_message = update.message
-        attachments: list[FileMeta] = []
-        for kind in ("document", "photo", "video", "audio", "voice", "animation", "video_note", "sticker"):
-            meta = await _download_to_file_meta(tg_message, kind, context)
-            if meta:
-                attachments.append(meta)
+        chat_id = update.effective_chat.id
 
-        eu = update.effective_user
-        sender_user_name = _telegram_user_name_for_store(eu)
-        sender_telegram_display_name = _telegram_display_name_only(eu)
-        sender_username = _telegram_username_or_none(eu)
+        async def _work() -> str:
+            attachments: list[FileMeta] = []
+            for kind in ("document", "photo", "video", "audio", "voice", "animation", "video_note", "sticker"):
+                meta = await _download_to_file_meta(tg_message, kind, context)
+                if meta:
+                    attachments.append(meta)
 
-        reply_fu = tg_message.reply_to_message.from_user if tg_message.reply_to_message else None
-        reply_target_user_name = _telegram_user_name_for_store(reply_fu) if reply_fu else None
-        reply_target_telegram_display_name = _telegram_display_name_only(reply_fu) if reply_fu else None
-        reply_to_username_norm = _normalize_username_str(
-            tg_message.reply_to_message.from_user.username
-            if tg_message.reply_to_message and tg_message.reply_to_message.from_user
-            else None
-        )
+            eu = update.effective_user
+            sender_user_name = _telegram_user_name_for_store(eu)
+            sender_telegram_display_name = _telegram_display_name_only(eu)
+            sender_username = _telegram_username_or_none(eu)
 
-        mu = _extract_mention_user(tg_message)
-        if mu:
-            mentioned_user_name = _telegram_user_name_for_store(mu)
-            mentioned_telegram_display_name = _telegram_display_name_only(mu)
-            mentioned_username = _telegram_username_or_none(mu) or _normalize_username_str(
-                _extract_mentioned_user_username(tg_message)
+            reply_fu = tg_message.reply_to_message.from_user if tg_message.reply_to_message else None
+            reply_target_user_name = _telegram_user_name_for_store(reply_fu) if reply_fu else None
+            reply_target_telegram_display_name = _telegram_display_name_only(reply_fu) if reply_fu else None
+            reply_to_username_norm = _normalize_username_str(
+                tg_message.reply_to_message.from_user.username
+                if tg_message.reply_to_message and tg_message.reply_to_message.from_user
+                else None
             )
-        else:
-            un = _extract_mentioned_user_username(tg_message)
-            mentioned_user_name = un if un else None
-            mentioned_telegram_display_name = "" if un else None
-            mentioned_username = _normalize_username_str(un)
 
-        message_input = MessageInput(
-            chat_id=update.effective_chat.id,
-            user_id=update.effective_user.id,
-            bot_user_id=getattr(context.bot, "id", None),
-            text=tg_message.text or tg_message.caption,
-            reply_to_user_id=(
-                tg_message.reply_to_message.from_user.id if tg_message.reply_to_message else None
-            ),
-            reply_to_username=reply_to_username_norm,
-            mentioned_user_id=_extract_mentioned_user_id(tg_message),
-            mentioned_username=mentioned_username,
-            sender_username=sender_username,
-            sender_user_name=sender_user_name,
-            sender_telegram_display_name=sender_telegram_display_name,
-            reply_target_user_name=reply_target_user_name,
-            reply_target_telegram_display_name=reply_target_telegram_display_name,
-            mentioned_user_name=mentioned_user_name,
-            mentioned_telegram_display_name=mentioned_telegram_display_name or "",
-            attachments=attachments,
-        )
-        output = state_machine.handle_message(message_input)
+            mu = _extract_mention_user(tg_message)
+            if mu:
+                mentioned_user_name = _telegram_user_name_for_store(mu)
+                mentioned_telegram_display_name = _telegram_display_name_only(mu)
+                mentioned_username = _telegram_username_or_none(mu) or _normalize_username_str(
+                    _extract_mentioned_user_username(tg_message)
+                )
+            else:
+                un = _extract_mentioned_user_username(tg_message)
+                mentioned_user_name = un if un else None
+                mentioned_telegram_display_name = "" if un else None
+                mentioned_username = _normalize_username_str(un)
+
+            message_input = MessageInput(
+                chat_id=update.effective_chat.id,
+                user_id=update.effective_user.id,
+                bot_user_id=getattr(context.bot, "id", None),
+                text=tg_message.text or tg_message.caption,
+                reply_to_user_id=(
+                    tg_message.reply_to_message.from_user.id if tg_message.reply_to_message else None
+                ),
+                reply_to_username=reply_to_username_norm,
+                mentioned_user_id=_extract_mentioned_user_id(tg_message),
+                mentioned_username=mentioned_username,
+                sender_username=sender_username,
+                sender_user_name=sender_user_name,
+                sender_telegram_display_name=sender_telegram_display_name,
+                reply_target_user_name=reply_target_user_name,
+                reply_target_telegram_display_name=reply_target_telegram_display_name,
+                mentioned_user_name=mentioned_user_name,
+                mentioned_telegram_display_name=mentioned_telegram_display_name or "",
+                attachments=attachments,
+            )
+            return await asyncio.to_thread(state_machine.handle_message, message_input)
+
+        output = await _typing_keepalive(bot=context.bot, chat_id=chat_id, work=_work())
         chat_type = getattr(update.effective_chat, "type", None)
         await deliver_conversation_output(
             bot=context.bot,
