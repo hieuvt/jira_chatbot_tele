@@ -17,7 +17,7 @@ project_root = Path(__file__).resolve().parents[2]
 if str(project_root) not in sys.path:
     sys.path.insert(0, str(project_root))
 
-from src.bot.handlers import register_handlers
+from src.bot.handlers import conversation_reminder_post_init, register_handlers
 from src.common.logging import get_logger
 from src.common.errors import JiraClientError
 from src.conversation.state_machine import ConversationStateMachine, StateMachineConfig
@@ -67,6 +67,13 @@ def bootstrap_app() -> dict[str, Any]:
     )
 
     conversation_cfg = runtime.get("conversation", {}) if isinstance(runtime.get("conversation"), dict) else {}
+    timeout_minutes = int(conversation_cfg.get("timeout_minutes", 10))
+    reminder_after_minutes = int(conversation_cfg.get("reminder_after_minutes", 5))
+    if not (0 < reminder_after_minutes < timeout_minutes):
+        raise ValueError(
+            "conversation.reminder_after_minutes must satisfy 0 < reminder_after_minutes < timeout_minutes; "
+            f"got reminder_after_minutes={reminder_after_minutes}, timeout_minutes={timeout_minutes}"
+        )
     telegram_cfg = runtime.get("telegram", {}) if isinstance(runtime.get("telegram"), dict) else {}
     attachments_cfg = telegram_cfg.get("attachments", {}) if isinstance(telegram_cfg.get("attachments"), dict) else {}
 
@@ -108,7 +115,8 @@ def bootstrap_app() -> dict[str, Any]:
             project_key=str(jira["project_key"]),
             issue_type_id=str(jira["issue_type_id"]),
             subtask_issue_type_id=str(jira["subtask_issue_type_id"]),
-            timeout_minutes=int(conversation_cfg.get("timeout_minutes", 10)),
+            timeout_minutes=timeout_minutes,
+            reminder_after_minutes=reminder_after_minutes,
             attachment_max_files=int(attachments_cfg.get("max_files", 10)),
             attachment_max_total_bytes=20 * 1024 * 1024,
             attachment_max_bytes=int(jira.get("attachment_max_bytes", 10 * 1024 * 1024)),
@@ -120,7 +128,7 @@ def bootstrap_app() -> dict[str, Any]:
         ),
     )
 
-    application = Application.builder().token(token).build()
+    application = Application.builder().token(token).post_init(conversation_reminder_post_init).build()
     tpl_cancelled = str(template_bundle.bot_replies.get("TPL_CANCELLED", ""))
     register_handlers(application, state_machine, tpl_cancelled=tpl_cancelled)
 

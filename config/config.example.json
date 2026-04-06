@@ -28,7 +28,8 @@
     }
   },
   "conversation": {
-    "timeout_minutes": 10
+    "timeout_minutes": 10,
+    "reminder_after_minutes": 5
   },
   "llm": {
     "enabled": true,

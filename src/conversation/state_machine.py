@@ -16,6 +16,7 @@ if str(_project_root) not in sys.path:
 import json
 import mimetypes
 import html
+import threading
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
 from enum import Enum
@@ -109,6 +110,38 @@ class ConversationState(str, Enum):
     S16_CONFIRM_MARK_DONE = "S16_CONFIRM_MARK_DONE"
 
 
+_REMINDER_ELIGIBLE_STATES: frozenset[ConversationState] = frozenset(
+    {
+        ConversationState.S1_ASK_SENDER_JIRA_ID,
+        ConversationState.S4_ASK_ASSIGNEE,
+        ConversationState.S6_ASK_SUMMARY,
+        ConversationState.S7_ASK_DESCRIPTION,
+        ConversationState.S8_ASK_ATTACHMENTS,
+        ConversationState.S9_ASK_CHECKLIST,
+        ConversationState.S10_ASK_DUE_DAYS,
+        ConversationState.S11_CONFIRM,
+        ConversationState.S15_ASK_TASK_INDEX,
+        ConversationState.S16_CONFIRM_MARK_DONE,
+    }
+)
+
+_REMINDER_INTENTS: frozenset[Intent] = frozenset(
+    {Intent.ASSIGN_TASK, Intent.ASSIGN_TASK_SELF, Intent.MARK_TASK_DONE}
+)
+
+
+@dataclass(frozen=True)
+class ReminderCandidate:
+    """Một phiên đủ điều kiện gửi nhắc lại prompt (đọc từ state machine có lock)."""
+
+    chat_id: int
+    user_id: int
+    text: str
+    is_html: bool
+    reply_to_message_id: int | None = None
+    reply_thread_id: int | None = None
+
+
 @dataclass
 class FileMeta:
     """Metadata file tải từ Telegram (kèm bytes) trước khi upload Jira."""
@@ -139,6 +172,8 @@ class MessageInput:
     mentioned_user_name: str | None = None
     mentioned_telegram_display_name: str | None = None
     bot_user_id: int | None = None
+    telegram_message_id: int | None = None
+    message_thread_id: int | None = None
     attachments: list[FileMeta] = field(default_factory=list)
 
     @property
@@ -172,9 +207,15 @@ class ConversationBuffer:
     mark_done_selected_summary: str | None = None
     started_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    last_prompt_text: str | None = None
+    last_prompt_html: bool = False
+    reminder_sent_for_silence: bool = False
+    last_user_telegram_message_id: int | None = None
+    last_user_message_thread_id: int | None = None
 
     def touch(self) -> None:
         self.updated_at = datetime.now(timezone.utc)
+        self.reminder_sent_for_silence = False
 
     def clear_attachments(self) -> None:
         for item in self.attachments:
@@ -189,6 +230,7 @@ class StateMachineConfig:
     issue_type_id: str
     subtask_issue_type_id: str
     timeout_minutes: int = 10
+    reminder_after_minutes: int = 5
     attachment_max_files: int = 10
     attachment_max_total_bytes: int = 20 * 1024 * 1024
     attachment_max_bytes: int | None = None
@@ -222,9 +264,14 @@ class ConversationStateMachine:
         self._reporter = reporter
         self._poem_service = poem_service
         self._sessions: dict[tuple[int, int], ConversationBuffer] = {}
+        self._sessions_lock = threading.Lock()
 
     def handle_message(self, message: MessageInput) -> str:
         """Điểm vào chính: hủy, intent mới, tiếp tục phiên hoặc unknown."""
+        with self._sessions_lock:
+            return self._handle_message_locked(message)
+
+    def _handle_message_locked(self, message: MessageInput) -> str:
         key = (message.chat_id, message.user_id)
         existing = self._sessions.get(key)
         if existing and self._is_expired(existing):
@@ -249,6 +296,10 @@ class ConversationStateMachine:
                 self._end_session(key)
                 return self._start_new_session(message=message, intent=route.intent)
             existing.touch()
+            if message.telegram_message_id is not None:
+                existing.last_user_telegram_message_id = message.telegram_message_id
+            if message.message_thread_id is not None:
+                existing.last_user_message_thread_id = message.message_thread_id
             return self._handle_existing(buffer=existing, message=message, key=key)
 
         route = resolve_intent(message.text or "", intent_aliases=self._intent_aliases)
@@ -302,6 +353,10 @@ class ConversationStateMachine:
             )
         key = (message.chat_id, message.user_id)
         self._sessions[key] = buffer
+        if message.telegram_message_id is not None:
+            buffer.last_user_telegram_message_id = message.telegram_message_id
+        if message.message_thread_id is not None:
+            buffer.last_user_message_thread_id = message.message_thread_id
         return self._run_non_interactive_states(buffer=buffer, key=key)
 
     def _handle_existing(self, *, buffer: ConversationBuffer, message: MessageInput, key: tuple[int, int]) -> str:
@@ -968,6 +1023,60 @@ class ConversationStateMachine:
         if error.code in {"JIRA_SERVER_ERROR", "JIRA_HTTP_ERROR", "JIRA_INVALID_JSON", "JIRA_UNKNOWN_ERROR"}:
             return "Đã có lỗi khi tạo công việc trên Jira. Vui lòng thử lại sau."
         return "Đã có lỗi khi tạo công việc trên Jira. Vui lòng thử lại sau."
+
+    def note_outbound_prompt(self, *, chat_id: int, user_id: int, output: str) -> None:
+        """Lưu nội dung prompt vừa gửi để job nhắc có thể gửi lại (giaoviec / giaochotoi / baoxong)."""
+        if not output or output.startswith(MULTI_MESSAGE_PREFIX):
+            return
+        is_html = False
+        body = output
+        if output.startswith(HTML_OUTPUT_PREFIX):
+            is_html = True
+            body = output[len(HTML_OUTPUT_PREFIX) :]
+        key = (chat_id, user_id)
+        with self._sessions_lock:
+            buf = self._sessions.get(key)
+            if not buf or buf.intent not in _REMINDER_INTENTS:
+                return
+            if buf.state not in _REMINDER_ELIGIBLE_STATES:
+                return
+            buf.last_prompt_text = body
+            buf.last_prompt_html = is_html
+            buf.reminder_sent_for_silence = False
+
+    def iter_reminder_candidates(self, *, now: datetime | None = None) -> list[ReminderCandidate]:
+        """Phiên còn hiệu lực, đủ im lặng, chưa nhắc trong chu kỳ này, có prompt đã lưu."""
+        if now is None:
+            now = datetime.now(timezone.utc)
+        rem_after = timedelta(minutes=self._config.reminder_after_minutes)
+        timeout_td = timedelta(minutes=self._config.timeout_minutes)
+        out: list[ReminderCandidate] = []
+        with self._sessions_lock:
+            for (chat_id, user_id), buf in list(self._sessions.items()):
+                if buf.intent not in _REMINDER_INTENTS or buf.state not in _REMINDER_ELIGIBLE_STATES:
+                    continue
+                if not buf.last_prompt_text or buf.reminder_sent_for_silence:
+                    continue
+                silence = now - buf.updated_at
+                if silence < rem_after or silence >= timeout_td:
+                    continue
+                out.append(
+                    ReminderCandidate(
+                        chat_id=chat_id,
+                        user_id=user_id,
+                        text=buf.last_prompt_text,
+                        is_html=buf.last_prompt_html,
+                        reply_to_message_id=buf.last_user_telegram_message_id,
+                        reply_thread_id=buf.last_user_message_thread_id,
+                    )
+                )
+        return out
+
+    def mark_reminder_sent(self, *, chat_id: int, user_id: int) -> None:
+        with self._sessions_lock:
+            buf = self._sessions.get((chat_id, user_id))
+            if buf:
+                buf.reminder_sent_for_silence = True
 
     def _end_session(self, key: tuple[int, int]) -> None:
         """Xóa session và giải phóng bytes file đính kèm trong buffer."""

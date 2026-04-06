@@ -211,13 +211,18 @@ def build_state_machine(
     member_ids: set[str] | None = None,
     admin_ids: set[str] | None = None,
     jira_overrides: dict[str, JiraClientError | None] | None = None,
+    conversation_patch: dict[str, Any] | None = None,
 ) -> tuple[ConversationStateMachine, FakeJiraClient, FakeUsersStore]:
     """Dựng state machine + fake Jira + fake store từ config/templates thật."""
     runtime = load_runtime_config(config_path)
     jira = runtime.get("jira", {})
     if not isinstance(jira, dict):
         raise ValueError("config.jira must be object")
-    conversation = runtime.get("conversation", {}) if isinstance(runtime.get("conversation"), dict) else {}
+    conversation = dict(
+        runtime.get("conversation", {}) if isinstance(runtime.get("conversation"), dict) else {}
+    )
+    if conversation_patch:
+        conversation.update(conversation_patch)
     telegram = runtime.get("telegram", {}) if isinstance(runtime.get("telegram"), dict) else {}
     attachments = telegram.get("attachments", {}) if isinstance(telegram.get("attachments"), dict) else {}
 
@@ -260,6 +265,7 @@ def build_state_machine(
             issue_type_id=str(jira["issue_type_id"]),
             subtask_issue_type_id=str(jira["subtask_issue_type_id"]),
             timeout_minutes=int(conversation.get("timeout_minutes", 10)),
+            reminder_after_minutes=int(conversation.get("reminder_after_minutes", 5)),
             attachment_max_files=int(attachments.get("max_files", 10)),
             attachment_max_total_bytes=20 * 1024 * 1024,
             attachment_max_bytes=int(jira.get("attachment_max_bytes", 10 * 1024 * 1024)),

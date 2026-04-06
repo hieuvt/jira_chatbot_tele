@@ -5,14 +5,21 @@ from __future__ import annotations
 import asyncio
 from datetime import datetime, timezone
 import json
+from types import SimpleNamespace
 from typing import Any, Coroutine, TypeVar
 
-from telegram import ForceReply, Message, Update, User
+from telegram import ForceReply, Message, ReplyParameters, Update, User
 from telegram.constants import ChatAction
 from telegram.error import TelegramError
 from telegram.ext import Application, ContextTypes, MessageHandler, filters
 
-from src.conversation.state_machine import FileMeta, MessageInput, build_filename, MULTI_MESSAGE_PREFIX
+from src.conversation.state_machine import (
+    FileMeta,
+    MessageInput,
+    ReminderCandidate,
+    build_filename,
+    MULTI_MESSAGE_PREFIX,
+)
 
 HTML_OUTPUT_PREFIX = "__HTML__:"
 
@@ -136,6 +143,94 @@ def _needs_user_reply(output: str) -> bool:
     return any(m in output for m in markers)
 
 
+def _reply_params_to_user_message(message: Message) -> ReplyParameters:
+    """Bot gửi tin trả lời đúng message user — cần cho ForceReply(selective=True) trong nhóm/forum."""
+    mid = int(message.message_id)
+    tid = getattr(message, "message_thread_id", None)
+    if tid is not None:
+        return ReplyParameters(message_id=mid, message_thread_id=tid)
+    return ReplyParameters(message_id=mid)
+
+
+def _reply_params_for_reminder(c: ReminderCandidate) -> ReplyParameters | None:
+    if c.reply_to_message_id is None:
+        return None
+    mid = int(c.reply_to_message_id)
+    if c.reply_thread_id is not None:
+        return ReplyParameters(message_id=mid, message_thread_id=int(c.reply_thread_id))
+    return ReplyParameters(message_id=mid)
+
+
+def _build_reminder_callback(state_machine: Any):
+    """Coroutine gọi định kỳ: gửi nhắc cho các phiên đủ điều kiện."""
+
+    async def reminder_callback(context: ContextTypes.DEFAULT_TYPE) -> None:
+        iter_fn = getattr(state_machine, "iter_reminder_candidates", None)
+        mark_fn = getattr(state_machine, "mark_reminder_sent", None)
+        if not callable(iter_fn) or not callable(mark_fn):
+            return
+        candidates = iter_fn(now=None)
+        bot = context.application.bot
+        for c in candidates:
+            try:
+                chat = await bot.get_chat(c.chat_id)
+                chat_type = getattr(chat, "type", None)
+            except TelegramError:
+                chat_type = None
+            reply_markup = (
+                ForceReply(selective=True, input_field_placeholder="…")
+                if chat_type in ("group", "supergroup", "private") and _needs_user_reply(c.text)
+                else None
+            )
+            rparams = _reply_params_for_reminder(c)
+            send_kw: dict[str, Any] = {
+                "chat_id": c.chat_id,
+                "text": c.text,
+                "reply_markup": reply_markup,
+                "parse_mode": "HTML" if c.is_html else None,
+            }
+            if rparams is not None:
+                send_kw["reply_parameters"] = rparams
+            try:
+                await bot.send_message(**send_kw)
+                mark_fn(chat_id=c.chat_id, user_id=c.user_id)
+            except TelegramError:
+                pass
+
+    return reminder_callback
+
+
+async def conversation_reminder_post_init(application: Application) -> None:
+    """
+    Khi không cài `python-telegram-bot[job-queue]`, `job_queue` là None — chạy vòng nhắc bằng asyncio.
+    Phải đăng ký qua Application.builder().post_init(...), không gọi application.post_init(...) sau build
+    (thuộc tính đó là callback hoặc None, không phải hàm đăng ký).
+    """
+    if application.job_queue is not None:
+        return
+    reminder_callback = application.bot_data.get("_reminder_callback")
+    if not callable(reminder_callback):
+        return
+
+    async def loop() -> None:
+        await asyncio.sleep(30.0)
+        while True:
+            await reminder_callback(SimpleNamespace(application=application))  # type: ignore[arg-type]
+            await asyncio.sleep(60.0)
+
+    application.create_task(loop())
+
+
+def register_conversation_reminder_job(application: Application, state_machine: Any) -> None:
+    """Gửi lại prompt đang chờ (giaoviec / giaochotoi / baoxong) sau reminder_after_minutes im lặng."""
+    reminder_callback = _build_reminder_callback(state_machine)
+    jq = application.job_queue
+    if jq is not None:
+        jq.run_repeating(reminder_callback, interval=60.0, first=30.0)
+        return
+    application.bot_data["_reminder_callback"] = reminder_callback
+
+
 async def deliver_conversation_output(
     *,
     bot: object,
@@ -146,6 +241,7 @@ async def deliver_conversation_output(
     chat_type: str | None,
     tpl_cancelled: str,
     force_reply_tracker: dict[tuple[int, int], int],
+    state_machine: Any | None = None,
 ) -> None:
     """
     Gửi nội dung state machine ra chat.
@@ -199,16 +295,22 @@ async def deliver_conversation_output(
 
     reply_markup = (
         ForceReply(selective=True, input_field_placeholder="…")
-        if chat_type in ("group", "supergroup") and _needs_user_reply(clean_output)
+        if chat_type in ("group", "supergroup", "private") and _needs_user_reply(clean_output)
         else None
     )
-    sent = await trigger_message.reply_text(
-        clean_output,
+    sent = await bot.send_message(
+        chat_id=chat_id,
+        text=clean_output,
         reply_markup=reply_markup,
         parse_mode="HTML" if is_html_output else None,
+        reply_parameters=_reply_params_to_user_message(trigger_message),
     )
     if reply_markup is not None and sent and getattr(sent, "message_id", None) is not None:
         force_reply_tracker[key] = int(sent.message_id)
+    if state_machine is not None:
+        note = getattr(state_machine, "note_outbound_prompt", None)
+        if callable(note):
+            note(chat_id=chat_id, user_id=user_id, output=output)
 
 
 async def _download_to_file_meta(message: Message, kind: str, context: ContextTypes.DEFAULT_TYPE) -> FileMeta | None:
@@ -309,6 +411,7 @@ def register_handlers(
     tpl_cancelled: str,
 ) -> None:
     """Đăng ký MessageHandler toàn bộ tin nhắn; build MessageInput và gọi state_machine.handle_message."""
+    application.bot_data["state_machine"] = state_machine
     force_reply_tracker: dict[tuple[int, int], int] = {}
 
     async def on_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -356,6 +459,8 @@ def register_handlers(
                 chat_id=update.effective_chat.id,
                 user_id=update.effective_user.id,
                 bot_user_id=getattr(context.bot, "id", None),
+                telegram_message_id=int(tg_message.message_id),
+                message_thread_id=getattr(tg_message, "message_thread_id", None),
                 text=tg_message.text or tg_message.caption,
                 reply_to_user_id=(
                     tg_message.reply_to_message.from_user.id if tg_message.reply_to_message else None
@@ -385,7 +490,9 @@ def register_handlers(
             chat_type=chat_type,
             tpl_cancelled=tpl_cancelled,
             force_reply_tracker=force_reply_tracker,
+            state_machine=state_machine,
         )
 
     application.add_handler(MessageHandler(filters.ALL, on_message))
+    register_conversation_reminder_job(application, state_machine)
 

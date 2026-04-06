@@ -46,7 +46,7 @@ def test_invalid_due_days() -> int:
     chat_id = 3002
     user_id = 7101
     su = dict(sender_username=tg_user)
-    machine.handle_message(make_text(chat_id, user_id, "/vieccuatoi", **su))
+    machine.handle_message(make_text(chat_id, user_id, "/giaochotoi", **su))
     machine.handle_message(make_text(chat_id, user_id, "Summary A", **su))
     machine.handle_message(make_text(chat_id, user_id, "Description A", **su))
     machine.handle_message(make_text(chat_id, user_id, "không", **su))
@@ -78,7 +78,7 @@ def test_attachment_limits() -> int:
     user_id = 7301
     su = dict(sender_username=tg_user)
     failures = 0
-    machine.handle_message(make_text(chat_id, user_id, "/vieccuatoi", **su))
+    machine.handle_message(make_text(chat_id, user_id, "/giaochotoi", **su))
     machine.handle_message(make_text(chat_id, user_id, "Summary limits", **su))
     machine.handle_message(make_text(chat_id, user_id, "Description limits", **su))
     # single-file max (default from config is 10MB)
@@ -101,7 +101,7 @@ def test_slash_huy_cancels_session() -> int:
     chat_id = 3007
     user_id = 7601
     su = dict(sender_username=tg_user)
-    machine.handle_message(make_text(chat_id, user_id, "/vieccuatoi", **su))
+    machine.handle_message(make_text(chat_id, user_id, "/giaochotoi", **su))
     failures = 0
     failures += _check((chat_id, user_id) in machine._sessions, "session active before /huy")  # noqa: SLF001
     msg = machine.handle_message(make_text(chat_id, user_id, "/huy", **su))
@@ -119,12 +119,61 @@ def test_timeout() -> int:
     chat_id = 3005
     user_id = 7401
     su = dict(sender_username=tg_user)
-    machine.handle_message(make_text(chat_id, user_id, "/vieccuatoi", **su))
+    machine.handle_message(make_text(chat_id, user_id, "/giaochotoi", **su))
     # force timeout by mutating in-memory buffer timestamp
     session = machine._sessions[(chat_id, user_id)]  # noqa: SLF001
     session.updated_at = datetime.now(timezone.utc) - timedelta(minutes=11)
     msg = machine.handle_message(make_text(chat_id, user_id, "abc", **su))
     return _check("Mình chưa hiểu yêu cầu" in msg, "timeout clears session and treats next message as new")
+
+
+def test_reminder_scan_and_mark() -> int:
+    sender = "jira-user-7701"
+    tg_user = "u7701"
+    machine, _, _ = build_state_machine(
+        user_mapping={tg_user: sender},
+        member_ids={sender},
+        conversation_patch={"timeout_minutes": 10, "reminder_after_minutes": 4},
+    )
+    chat_id = 3010
+    user_id = 7701
+    su = dict(sender_username=tg_user)
+    failures = 0
+    msg = machine.handle_message(make_text(chat_id, user_id, "/giaochotoi", **su))
+    machine.note_outbound_prompt(chat_id=chat_id, user_id=user_id, output=msg)
+    session = machine._sessions[(chat_id, user_id)]  # noqa: SLF001
+    session.updated_at = datetime.now(timezone.utc) - timedelta(minutes=5)
+    now = datetime.now(timezone.utc)
+    cands = machine.iter_reminder_candidates(now=now)
+    failures += _check(len(cands) == 1, "one reminder candidate after silence")
+    failures += _check(cands[0].text == session.last_prompt_text, "candidate matches stored last_prompt_text")
+    machine.mark_reminder_sent(chat_id=chat_id, user_id=user_id)
+    failures += _check(len(machine.iter_reminder_candidates(now=now)) == 0, "no candidate after mark_reminder_sent")
+    session.touch()
+    session.updated_at = datetime.now(timezone.utc) - timedelta(minutes=5)
+    failures += _check(
+        len(machine.iter_reminder_candidates(now=datetime.now(timezone.utc))) == 1,
+        "candidate again after touch resets flag and new silence",
+    )
+    return failures
+
+
+def test_reminder_respects_timeout_window() -> int:
+    sender = "jira-user-7702"
+    tg_user = "u7702"
+    machine, _, _ = build_state_machine(
+        user_mapping={tg_user: sender},
+        member_ids={sender},
+        conversation_patch={"timeout_minutes": 10, "reminder_after_minutes": 4},
+    )
+    chat_id = 3011
+    user_id = 7702
+    su = dict(sender_username=tg_user)
+    msg = machine.handle_message(make_text(chat_id, user_id, "/giaochotoi", **su))
+    machine.note_outbound_prompt(chat_id=chat_id, user_id=user_id, output=msg)
+    session = machine._sessions[(chat_id, user_id)]  # noqa: SLF001
+    session.updated_at = datetime.now(timezone.utc) - timedelta(minutes=11)
+    return _check(len(machine.iter_reminder_candidates(now=datetime.now(timezone.utc))) == 0, "no reminder past timeout")
 
 
 def test_jira_error_mapping() -> int:
@@ -145,7 +194,7 @@ def test_jira_error_mapping() -> int:
     chat_id = 3006
     user_id = 7501
     su = dict(sender_username=tg_user)
-    machine.handle_message(make_text(chat_id, user_id, "/vieccuatoi", **su))
+    machine.handle_message(make_text(chat_id, user_id, "/giaochotoi", **su))
     machine.handle_message(make_text(chat_id, user_id, "Summary rate limit", **su))
     machine.handle_message(make_text(chat_id, user_id, "Description rate limit", **su))
     machine.handle_message(make_text(chat_id, user_id, "không", **su))
@@ -163,6 +212,8 @@ def main() -> int:
     failures += test_attachment_limits()
     failures += test_slash_huy_cancels_session()
     failures += test_timeout()
+    failures += test_reminder_scan_and_mark()
+    failures += test_reminder_respects_timeout_window()
     failures += test_jira_error_mapping()
     if failures:
         print(f"PHASE 3 NEGATIVE TEST FAILED with {failures} issue(s)")
