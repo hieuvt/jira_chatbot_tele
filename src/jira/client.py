@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import json
 import random
+import re
 import time
 import uuid
 from datetime import date, datetime, timedelta
@@ -377,6 +378,32 @@ class JiraClient:
                 break
         return grouped
 
+    def get_latest_comment(self, issue_key: str) -> dict[str, object] | None:
+        key = (issue_key or "").strip()
+        if not key:
+            return None
+        path = f"/rest/api/3/issue/{parse.quote(key)}/comment"
+        params = {
+            "maxResults": "1",
+            "startAt": "0",
+            "orderBy": "-created",
+        }
+        response = self._request_json("GET", path, params=params)
+        comments = response.get("comments", []) if isinstance(response, dict) else []
+        if not isinstance(comments, list) or not comments:
+            return None
+        first = comments[0]
+        return first if isinstance(first, dict) else None
+
+    def latest_comment_has_image(self, issue_key: str) -> bool:
+        comment = self.get_latest_comment(issue_key)
+        if not comment:
+            return False
+        body = comment.get("body")
+        if self._comment_body_contains_illustration_image(body):
+            return True
+        return self._comment_text_contains_image_url(self._extract_text_from_adf(body))
+
     def _build_jql_recently_completed(self, query: QueryRecentlyCompletedRequest) -> str:
         window_end = query.now
         window_start = query.now - timedelta(hours=query.lookback_hours)
@@ -397,6 +424,98 @@ class JiraClient:
             return base_jql
         escaped_assignee = assignee_account_id.replace("\\", "\\\\").replace('"', '\\"')
         return f'{base_jql} AND assignee = "{escaped_assignee}"'
+
+    def _comment_body_contains_illustration_image(self, body: object) -> bool:
+        if isinstance(body, str):
+            return self._comment_text_contains_image_url(body)
+        if not isinstance(body, dict):
+            return False
+        return self._adf_node_contains_image(node=body)
+
+    def _adf_node_contains_image(self, *, node: object) -> bool:
+        if isinstance(node, dict):
+            node_type = str(node.get("type", "")).strip().lower()
+            if node_type in {"media", "mediagroup"}:
+                return True
+
+            marks = node.get("marks", [])
+            if isinstance(marks, list):
+                for mark in marks:
+                    if not isinstance(mark, dict):
+                        continue
+                    if str(mark.get("type", "")).strip().lower() != "link":
+                        continue
+                    attrs = mark.get("attrs", {})
+                    href = ""
+                    if isinstance(attrs, dict):
+                        href = str(attrs.get("href", "")).strip()
+                    if self._href_looks_like_image_or_attachment(href):
+                        return True
+
+            text_value = node.get("text")
+            if isinstance(text_value, str) and self._comment_text_contains_image_url(text_value):
+                return True
+
+            for value in node.values():
+                if self._adf_node_contains_image(node=value):
+                    return True
+            return False
+
+        if isinstance(node, list):
+            for item in node:
+                if self._adf_node_contains_image(node=item):
+                    return True
+            return False
+
+        if isinstance(node, str):
+            return self._comment_text_contains_image_url(node)
+
+        return False
+
+    def _extract_text_from_adf(self, body: object) -> str:
+        chunks: list[str] = []
+
+        def walk(node: object) -> None:
+            if isinstance(node, str):
+                chunks.append(node)
+                return
+            if isinstance(node, list):
+                for item in node:
+                    walk(item)
+                return
+            if isinstance(node, dict):
+                text_value = node.get("text")
+                if isinstance(text_value, str):
+                    chunks.append(text_value)
+                for value in node.values():
+                    walk(value)
+
+        walk(body)
+        return " ".join(chunks)
+
+    def _href_looks_like_image_or_attachment(self, href: str) -> bool:
+        link = (href or "").strip()
+        if not link:
+            return False
+        if self._comment_text_contains_image_url(link):
+            return True
+        lower = link.lower()
+        return (
+            "/secure/attachment/" in lower
+            or "/attachment/" in lower
+            or "attachment" in lower and "id=" in lower
+        )
+
+    def _comment_text_contains_image_url(self, text: str) -> bool:
+        value = (text or "").strip()
+        if not value:
+            return False
+        if re.search(r"!\[[^\]]*\]\((https?://[^\s)]+)\)", value, flags=re.IGNORECASE):
+            return True
+        image_url_pattern = (
+            r"https?://[^\s<>\"]+?\.(?:png|jpe?g|gif|webp)(?:\?[^\s<>\"]*)?"
+        )
+        return re.search(image_url_pattern, value, flags=re.IGNORECASE) is not None
 
     def query_incomplete_issues_for_assignee(
         self,

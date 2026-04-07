@@ -39,6 +39,7 @@ class ReportIssue:
     issue_key: str
     summary: str
     due_date: date | None
+    has_image_illustration: bool | None = None
 
 
 @dataclass
@@ -73,6 +74,12 @@ def _format_report_issue_line(*, item: ReportIssue, jira_base_url: str) -> str:
         issue_anchor = f'<a href="{html_lib.escape(issue_url, quote=True)}">{escaped_issue}</a>'
         return f"- {issue_anchor}: {escaped_summary}{due_suffix}"
     return f"- {escaped_issue}: {escaped_summary}{due_suffix}"
+
+
+def _format_completed_issue_line(*, item: ReportIssue, jira_base_url: str) -> str:
+    base = _format_report_issue_line(item=item, jira_base_url=jira_base_url)
+    note = "có ảnh minh họa" if bool(item.has_image_illustration) else "KHÔNG có ảnh minh họa"
+    return f"{base} — {note}"
 
 
 class Reporter:
@@ -175,6 +182,8 @@ class Reporter:
         completed_grouped: dict[str, list[JiraIssueRecord]] = (
             completed_fn(completed_req) if callable(completed_fn) else {}
         )
+        latest_comment_has_image_fn = getattr(self.jira_client, "latest_comment_has_image", None)
+        completed_image_cache: dict[str, bool] = {}
 
         for group_key, records in completed_grouped.items():
             if not records:
@@ -200,8 +209,20 @@ class Reporter:
                         due_parsed = date.fromisoformat(record.due_date)
                     except ValueError:
                         due_parsed = None
+                has_image_illustration = False
+                if callable(latest_comment_has_image_fn) and record.issue_key:
+                    if record.issue_key in completed_image_cache:
+                        has_image_illustration = completed_image_cache[record.issue_key]
+                    else:
+                        has_image_illustration = bool(latest_comment_has_image_fn(record.issue_key))
+                        completed_image_cache[record.issue_key] = has_image_illustration
                 completed_items.append(
-                    ReportIssue(issue_key=record.issue_key, summary=record.summary, due_date=due_parsed)
+                    ReportIssue(
+                        issue_key=record.issue_key,
+                        summary=record.summary,
+                        due_date=due_parsed,
+                        has_image_illustration=has_image_illustration,
+                    )
                 )
             completed_items.sort(
                 key=lambda x: (x.due_date is None, x.due_date or date.min, x.issue_key),
@@ -271,7 +292,7 @@ class Reporter:
             if assignee.completed_recent:
                 block_lines = [f"Đã hoàn thành trong {self._lookback_hours}h qua"]
                 for item in assignee.completed_recent:
-                    block_lines.append(_format_report_issue_line(item=item, jira_base_url=jira_base_url))
+                    block_lines.append(_format_completed_issue_line(item=item, jira_base_url=jira_base_url))
                 section_blocks.append("\n".join(block_lines))
             body = "\n\n".join(section_blocks)
             messages.append(f"Assignee: {escaped_assignee}\n{body}")

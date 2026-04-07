@@ -43,6 +43,7 @@ def _check(cond: bool, label: str) -> int:
 class FakeJiraClient:
     grouped_issues: dict[str, list[JiraIssueRecord]]
     completed_issues: dict[str, list[JiraIssueRecord]] | None = None
+    completed_issue_has_image: dict[str, bool] | None = None
 
     def query_issues_by_due_date_for_reporter(self, query: Any) -> dict[str, list[JiraIssueRecord]]:  # noqa: ANN401
         _ = query
@@ -51,6 +52,9 @@ class FakeJiraClient:
     def query_issues_completed_in_window(self, query: Any) -> dict[str, list[JiraIssueRecord]]:  # noqa: ANN401
         _ = query
         return self.completed_issues or {}
+
+    def latest_comment_has_image(self, issue_key: str) -> bool:
+        return bool((self.completed_issue_has_image or {}).get(issue_key, False))
 
 
 def main() -> int:
@@ -176,7 +180,14 @@ def main() -> int:
         }
 
         reporter = Reporter(
-            jira_client=FakeJiraClient(grouped_issues=grouped, completed_issues=completed),
+            jira_client=FakeJiraClient(
+                grouped_issues=grouped,
+                completed_issues=completed,
+                completed_issue_has_image={
+                    "OM-40": True,
+                    "OM-77": False,
+                },
+            ),
             users_store=users_store,
             project_key="OM",
             bot_token="TEST_TOKEN",
@@ -224,7 +235,7 @@ def main() -> int:
         failures += _check(lines_ten[8] == "", "Blank line before completed section")
         failures += _check(lines_ten[9] == "Đã hoàn thành trong 24h qua", "Completed section heading")
         failures += _check(
-            lines_ten[10] == "- OM-40: review Phase 1 Huy (due: 2026-03-25)",
+            lines_ten[10] == "- OM-40: review Phase 1 Huy (due: 2026-03-25) — có ảnh minh họa",
             "Completed issue line (no base_url in fake client)",
         )
 
@@ -243,7 +254,7 @@ def main() -> int:
         failures += _check(lines_od[0] == "Assignee: @only_done", "only_done first line")
         failures += _check(lines_od[1] == "Đã hoàn thành trong 24h qua", "only_done has only completed heading")
         failures += _check(
-            lines_od[2] == "- OM-77: Chỉ có completed (due: N/A)",
+            lines_od[2] == "- OM-77: Chỉ có completed (due: N/A) — KHÔNG có ảnh minh họa",
             "only_done issue due N/A when duedate empty",
         )
         failures += _check("Quá hạn:" not in lines_od and "Sắp đến hạn:" not in lines_od, "only_done no due sections")
