@@ -24,6 +24,13 @@
 - `window_days`
 - `report_timezone` (default `Asia/Ho_Chi_Minh`)
 - `report_times` (default `["08:00", "17:00"]`)
+- `monthly_tasks` (default `[]`): danh sách task chạy định kỳ hàng tháng.
+  - `assignee_jira_id`: Jira account id người được giao việc.
+  - `day_of_month`: ngày chạy hàng tháng (1-31, chấp nhận `"02"` hoặc `2`).
+  - `time_of_day`: giờ chạy trong ngày dạng `HH:MM`.
+  - `task_name`: tên công việc (summary khi tạo issue).
+  - `task_description`: mô tả công việc.
+  - `due_days`: số ngày hoàn thành (due date = ngày chạy + `due_days`).
 
 ## conversation
 - `timeout_minutes`: conversation timeout in minutes (default `10`).

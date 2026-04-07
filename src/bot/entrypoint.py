@@ -25,8 +25,14 @@ from src.conversation.templates import load_template_bundle
 from src.jira.client import JiraClient
 from src.llm.gemini_client import GeminiClient, GeminiConfig
 from src.llm.poem_service import PoemService, PoemServiceConfig
+from src.jira.models import IssueCreateRequest
 from src.reports.reporter import Reporter
-from src.scheduler.jobs import build_scheduler, configure_phase5_report_jobs
+from src.scheduler.jobs import (
+    build_scheduler,
+    configure_monthly_task_jobs,
+    configure_phase5_report_jobs,
+    should_run_monthly_today,
+)
 from src.storage.users_store import UsersStore
 
 
@@ -89,6 +95,8 @@ def bootstrap_app() -> dict[str, Any]:
     if not isinstance(completed_status_names, list) or not completed_status_names:
         completed_status_names = ["Done"]
     completed_lookback_hours = int(notification_cfg.get("completed_lookback_hours", 24))
+    monthly_tasks_raw = notification_cfg.get("monthly_tasks", [])
+    monthly_tasks = monthly_tasks_raw if isinstance(monthly_tasks_raw, list) else []
 
     users_store = UsersStore(users_path)
 
@@ -193,15 +201,111 @@ def bootstrap_app() -> dict[str, Any]:
             except Exception:
                 logger.exception("Phase5: failed to send error message trace_id=%s", trace_id)
 
+    def _monthly_task_callback(*, task_index: int, day_of_month: int) -> None:
+        trace_id = uuid.uuid4().hex[:12]
+        if telegram_chat_id_first is None:
+            logger.error("MonthlyTask: allowed_chat_ids missing/invalid. trace_id=%s", trace_id)
+            return
+        if task_index < 0 or task_index >= len(monthly_tasks):
+            logger.error("MonthlyTask: invalid task index=%s trace_id=%s", task_index, trace_id)
+            return
+
+        task_cfg = monthly_tasks[task_index]
+        if not isinstance(task_cfg, dict):
+            logger.error("MonthlyTask: task config is not object index=%s trace_id=%s", task_index, trace_id)
+            return
+
+        try:
+            tz = ZoneInfo(report_timezone)
+        except Exception:
+            if str(report_timezone).lower() == "asia/ho_chi_minh":
+                tz = timezone(timedelta(hours=7))
+            else:
+                tz = timezone.utc
+        now = datetime.now(tz=tz)
+        if not should_run_monthly_today(day_of_month=day_of_month, now=now):
+            logger.info(
+                "MonthlyTask skip (not target day) idx=%s day=%s now=%s trace_id=%s",
+                task_index,
+                day_of_month,
+                now.isoformat(),
+                trace_id,
+            )
+            return
+
+        assignee_jira_id = str(task_cfg.get("assignee_jira_id", "")).strip()
+        task_name = str(task_cfg.get("task_name", "")).strip()
+        task_description = str(task_cfg.get("task_description", "")).strip()
+        try:
+            due_days = int(task_cfg.get("due_days", 0))
+        except Exception:
+            due_days = 0
+        if not assignee_jira_id or not task_name or not task_description or due_days <= 0:
+            logger.error(
+                "MonthlyTask invalid config idx=%s assignee=%s due_days=%s trace_id=%s",
+                task_index,
+                bool(assignee_jira_id),
+                due_days,
+                trace_id,
+            )
+            return
+
+        due_date = (now.date() + timedelta(days=due_days)).isoformat()
+        reverse = users_store.get_reverse_mapping()
+        assignee_username = reverse.get(assignee_jira_id)
+        assignee_display = f"@{assignee_username}" if assignee_username else assignee_jira_id
+
+        try:
+            issue_key = jira_client.create_issue(
+                IssueCreateRequest(
+                    project_key=str(jira["project_key"]),
+                    summary=task_name,
+                    description=task_description,
+                    assignee_account_id=assignee_jira_id,
+                    due_date=due_date,
+                    issue_type_id=str(jira["issue_type_id"]),
+                )
+            )
+            issue_url = f"{jira_client.base_url}/browse/{issue_key}" if getattr(jira_client, "base_url", None) else ""
+            msg = (
+                f"Tạo công việc định kỳ hàng tháng thành công: {issue_key}\n"
+                f"Assignee: {assignee_display}\n"
+                f"Summary: {task_name}\n"
+                f"Description: {task_description}\n"
+                f"Link Jira: {issue_url}\n"
+                f"Số checklist items: 0\n"
+                f"Số file upload: 0"
+            )
+            reporter.send_report(telegram_chat_id=telegram_chat_id_first, message_texts=[msg])
+            logger.info("MonthlyTask created idx=%s issue=%s trace_id=%s", task_index, issue_key, trace_id)
+        except JiraClientError:
+            logger.exception("MonthlyTask Jira error idx=%s trace_id=%s", task_index, trace_id)
+            try:
+                reporter.send_report(telegram_chat_id=telegram_chat_id_first, message_texts=["hệ thống đang lỗi"])
+            except Exception:
+                logger.exception("MonthlyTask failed to send error message trace_id=%s", trace_id)
+        except Exception:
+            logger.exception("MonthlyTask unexpected error idx=%s trace_id=%s", task_index, trace_id)
+            try:
+                reporter.send_report(telegram_chat_id=telegram_chat_id_first, message_texts=["hệ thống đang lỗi"])
+            except Exception:
+                logger.exception("MonthlyTask failed to send error message trace_id=%s", trace_id)
+
     configure_phase5_report_jobs(
         scheduler=scheduler,
         timezone=report_timezone,
         report_times=report_times,
         job_callback=_phase5_job_callback,
     )
+    configure_monthly_task_jobs(
+        scheduler=scheduler,
+        timezone=report_timezone,
+        monthly_tasks=monthly_tasks,
+        job_callback=_monthly_task_callback,
+    )
 
     scheduler.start()
-    logger.info("Scheduler started (Phase5)")
+    logger.info("Scheduler started (Phase5 + MonthlyTasks)")
 
     return {"logger": logger, "application": application, "scheduler": scheduler}
 

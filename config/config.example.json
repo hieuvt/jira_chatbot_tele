@@ -24,6 +24,16 @@
       "report_times": [
         "08:00",
         "17:00"
+      ],
+      "monthly_tasks": [
+        {
+          "assignee_jira_id": "631eae9ed1b3f6489b9297d3",
+          "day_of_month": "07",
+          "time_of_day": "18:05",
+          "task_name": "Báo cáo KPI tháng",
+          "task_description": "Chuẩn bị và gửi báo cáo KPI tháng theo template chuẩn.",
+          "due_days": 3
+        }
       ]
     }
   },
