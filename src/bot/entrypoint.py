@@ -69,6 +69,7 @@ def bootstrap_app() -> dict[str, Any]:
     conversation_cfg = runtime.get("conversation", {}) if isinstance(runtime.get("conversation"), dict) else {}
     timeout_minutes = int(conversation_cfg.get("timeout_minutes", 10))
     reminder_after_minutes = int(conversation_cfg.get("reminder_after_minutes", 5))
+    require_proof_photo_on_mark_done = bool(conversation_cfg.get("require_proof_photo_on_mark_done", False))
     if not (0 < reminder_after_minutes < timeout_minutes):
         raise ValueError(
             "conversation.reminder_after_minutes must satisfy 0 < reminder_after_minutes < timeout_minutes; "
@@ -125,6 +126,7 @@ def bootstrap_app() -> dict[str, Any]:
             my_task_completed_status_names=[str(x).strip() for x in completed_status_names if str(x).strip()],
             report_window_days=window_days,
             report_timezone=report_timezone,
+            require_proof_photo_on_mark_done=require_proof_photo_on_mark_done,
         ),
     )
 

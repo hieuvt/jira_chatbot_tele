@@ -58,7 +58,6 @@ HTML_OUTPUT_PREFIX = "__HTML__:"
 # - handler sẽ parse JSON và gửi lần lượt từng message
 MULTI_MESSAGE_PREFIX = "__MULTI_MESSAGE__:"
 
-
 def _jira_browse_anchor(issue_key: str, jira_base_url: str) -> str:
     """HTML anchor tới Jira browse; không có base_url thì chỉ escape key."""
     base = (jira_base_url or "").rstrip("/")
@@ -107,6 +106,7 @@ class ConversationState(str, Enum):
     S13_QUERY_MY_TASK = "S13_QUERY_MY_TASK"
     S14_LIST_INCOMPLETE_TASKS = "S14_LIST_INCOMPLETE_TASKS"
     S15_ASK_TASK_INDEX = "S15_ASK_TASK_INDEX"
+    S15A_ASK_PROOF_PHOTO = "S15A_ASK_PROOF_PHOTO"
     S16_CONFIRM_MARK_DONE = "S16_CONFIRM_MARK_DONE"
 
 
@@ -203,6 +203,7 @@ class ConversationBuffer:
     due_days: int | None = None
     attachments: list[FileMeta] = field(default_factory=list)
     mark_done_candidates: list[JiraIssueRecord] = field(default_factory=list)
+    mark_done_proof_attachments: list[FileMeta] = field(default_factory=list)
     mark_done_selected_issue_key: str | None = None
     mark_done_selected_summary: str | None = None
     started_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
@@ -221,6 +222,9 @@ class ConversationBuffer:
         for item in self.attachments:
             item.content_bytes = b""
         self.attachments.clear()
+        for item in self.mark_done_proof_attachments:
+            item.content_bytes = b""
+        self.mark_done_proof_attachments.clear()
 
 
 @dataclass
@@ -240,6 +244,7 @@ class StateMachineConfig:
     # Phase 5 reporting (dùng cho command /baocao)
     report_window_days: int = 3
     report_timezone: str = "Asia/Ho_Chi_Minh"
+    require_proof_photo_on_mark_done: bool = False
 
 
 class ConversationStateMachine:
@@ -379,6 +384,8 @@ class ConversationStateMachine:
             return self._on_confirm(buffer=buffer, message=message, key=key)
         if buffer.state == ConversationState.S15_ASK_TASK_INDEX:
             return self._on_mark_done_task_index(buffer=buffer, message=message, key=key)
+        if buffer.state == ConversationState.S15A_ASK_PROOF_PHOTO:
+            return self._on_mark_done_proof_photo(buffer=buffer, message=message)
         if buffer.state == ConversationState.S16_CONFIRM_MARK_DONE:
             return self._on_mark_done_confirm(buffer=buffer, message=message, key=key)
         return self._tpl("TPL_UNKNOWN_INTENT")
@@ -897,6 +904,10 @@ class ConversationStateMachine:
         rec = buffer.mark_done_candidates[idx - 1]
         buffer.mark_done_selected_issue_key = rec.issue_key
         buffer.mark_done_selected_summary = rec.summary
+        if self._config.require_proof_photo_on_mark_done:
+            buffer.mark_done_proof_attachments.clear()
+            buffer.state = ConversationState.S15A_ASK_PROOF_PHOTO
+            return self._tpl("TPL_ASK_MARK_DONE_PROOF_PHOTO")
         buffer.state = ConversationState.S16_CONFIRM_MARK_DONE
         base = self._mark_done_jira_base_url()
         key_a = _jira_browse_anchor(rec.issue_key, base)
@@ -907,12 +918,51 @@ class ConversationStateMachine:
         )
         return _wrap_html_output(confirm_body)
 
+    def _on_mark_done_proof_photo(self, *, buffer: ConversationBuffer, message: MessageInput) -> str:
+        if message.has_media:
+            photos = [att for att in message.attachments if att.kind == "photo"]
+            if not photos:
+                return self._tpl("TPL_ASK_MARK_DONE_PROOF_PHOTO")
+            buffer.mark_done_proof_attachments.extend(photos)
+            return self._tpl("TPL_ASK_MARK_DONE_PROOF_PHOTO")
+        if not message.text:
+            return self._tpl("TPL_ASK_MARK_DONE_PROOF_PHOTO")
+        if is_xong(message.text):
+            if not buffer.mark_done_proof_attachments:
+                return self._tpl("TPL_MARK_DONE_PROOF_PHOTO_REQUIRED")
+            buffer.state = ConversationState.S16_CONFIRM_MARK_DONE
+            issue_key = buffer.mark_done_selected_issue_key or ""
+            summary = buffer.mark_done_selected_summary or ""
+            base = self._mark_done_jira_base_url()
+            key_a = _jira_browse_anchor(issue_key, base)
+            sum_e = html.escape(summary)
+            confirm_body = (
+                f"Xác nhận báo hoàn thành issue {key_a}: {sum_e}? "
+                f'Nhập "Có" để cập nhật Jira, hoặc "Không" để hủy.'
+            )
+            return _wrap_html_output(confirm_body)
+        return self._tpl("TPL_ASK_MARK_DONE_PROOF_PHOTO")
+
     def _on_mark_done_confirm(self, *, buffer: ConversationBuffer, message: MessageInput, key: tuple[int, int]) -> str:
         if message.has_media or not message.text:
             return self._tpl("TPL_INVALID_CONFIRM")
         if is_co(message.text):
             issue_key = buffer.mark_done_selected_issue_key or ""
             try:
+                if buffer.mark_done_proof_attachments:
+                    self._jira_client.upload_attachments(
+                        issue_key=issue_key,
+                        files=[
+                            AttachmentMeta(
+                                filename=att.filename,
+                                size_bytes=att.size,
+                                telegram_file_id=att.telegram_file_id,
+                                content_bytes=att.content_bytes,
+                                content_type=att.mime_type or "application/octet-stream",
+                            )
+                            for att in buffer.mark_done_proof_attachments
+                        ],
+                    )
                 self._jira_client.transition_issue_to_done(issue_key)
             except JiraClientError as exc:
                 self._end_session(key)

@@ -25,7 +25,6 @@ HTML_OUTPUT_PREFIX = "__HTML__:"
 
 _T = TypeVar("_T")
 
-
 async def _typing_keepalive(*, bot: Any, chat_id: int, work: Coroutine[Any, Any, _T]) -> _T:
     """
     Gửi ChatAction.TYPING lặp lại trong lúc chờ `work` (Telegram chỉ giữ typing ~5s mỗi lần).
@@ -138,6 +137,8 @@ def _needs_user_reply(output: str) -> bool:
         "Nhập số ngày cần hoàn thành",
         "Xác nhận tạo công việc",
         "Nhập số thứ tự của task bạn muốn báo hoàn thành",
+        "Vui lòng upload ảnh minh chứng kết quả",
+        "Bạn chưa gửi ảnh minh chứng",
         "Xác nhận báo hoàn thành issue",
     )
     return any(m in output for m in markers)
