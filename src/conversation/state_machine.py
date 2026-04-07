@@ -950,7 +950,7 @@ class ConversationStateMachine:
             issue_key = buffer.mark_done_selected_issue_key or ""
             try:
                 if buffer.mark_done_proof_attachments:
-                    self._jira_client.upload_attachments(
+                    uploaded_attachments = self._jira_client.upload_attachments_detail(
                         issue_key=issue_key,
                         files=[
                             AttachmentMeta(
@@ -963,6 +963,7 @@ class ConversationStateMachine:
                             for att in buffer.mark_done_proof_attachments
                         ],
                     )
+                    self._jira_client.add_comment_with_embedded_images(issue_key=issue_key, attachments=uploaded_attachments)
                 self._jira_client.transition_issue_to_done(issue_key)
             except JiraClientError as exc:
                 self._end_session(key)

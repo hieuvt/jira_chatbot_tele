@@ -156,8 +156,8 @@ class JiraClient:
                 )
                 continue
             try:
-                result = self._upload_single_attachment(issue_key=issue_key, file_data=file_data)
-                uploaded.extend(result)
+                result_items = self._upload_single_attachment(issue_key=issue_key, file_data=file_data)
+                uploaded.extend([str(item.get("id", "")).strip() for item in result_items if str(item.get("id", "")).strip()])
             except JiraClientError as exc:
                 errors.append({"filename": file_data.filename, "code": exc.code, "message": exc.message})
         if errors:
@@ -168,6 +168,139 @@ class JiraClient:
                 retriable=False,
             )
         return uploaded
+
+    def upload_attachments_detail(self, issue_key: str, files: list[AttachmentMeta]) -> list[dict[str, str]]:
+        """
+        Upload attachments và trả metadata chi tiết để tái sử dụng cho comment ADF/link.
+        Trường trả về (nếu có): id, filename, content, mimeType.
+        """
+        uploaded: list[dict[str, str]] = []
+        errors: list[dict[str, object]] = []
+        for file_data in files:
+            if file_data.size_bytes > self.attachment_max_bytes:
+                errors.append(
+                    {
+                        "filename": file_data.filename,
+                        "code": "JIRA_ATTACHMENT_TOO_LARGE",
+                        "size_bytes": file_data.size_bytes,
+                        "max_bytes": self.attachment_max_bytes,
+                    }
+                )
+                continue
+            if len(file_data.content_bytes) != file_data.size_bytes:
+                errors.append(
+                    {
+                        "filename": file_data.filename,
+                        "code": "JIRA_ATTACHMENT_SIZE_MISMATCH",
+                        "size_bytes": file_data.size_bytes,
+                        "actual_bytes": len(file_data.content_bytes),
+                    }
+                )
+                continue
+            try:
+                result_items = self._upload_single_attachment(issue_key=issue_key, file_data=file_data)
+                for item in result_items:
+                    if not isinstance(item, dict):
+                        continue
+                    uploaded.append(
+                        {
+                            "id": str(item.get("id", "")).strip(),
+                            "filename": str(item.get("filename", "")).strip(),
+                            "content": str(item.get("content", "")).strip(),
+                            "mimeType": str(item.get("mimeType", "")).strip(),
+                        }
+                    )
+            except JiraClientError as exc:
+                errors.append({"filename": file_data.filename, "code": exc.code, "message": exc.message})
+        if errors:
+            raise JiraClientError(
+                code="JIRA_ATTACHMENT_FAIL_ALL",
+                message="Attachment upload failed for one or more files.",
+                context={"issue_key": issue_key, "uploaded": uploaded, "errors": errors},
+                retriable=False,
+            )
+        return uploaded
+
+    def add_comment_with_embedded_images(self, issue_key: str, attachments: list[dict[str, str]]) -> None:
+        """
+        Add comment vào issue. Ưu tiên ADF mediaGroup để hiển thị ảnh ngay trong comment.
+        Nếu tenant không hỗ trợ payload media (400), fallback comment link attachment.
+        """
+        key = (issue_key or "").strip()
+        if not key:
+            raise JiraClientError(
+                code="JIRA_BAD_REQUEST",
+                message="Issue key is required.",
+                context={},
+                retriable=False,
+            )
+        media_nodes: list[dict[str, object]] = []
+        link_targets: list[tuple[str, str]] = []
+        for att in attachments:
+            att_id = str(att.get("id", "")).strip()
+            filename = str(att.get("filename", "")).strip() or "attachment"
+            content_url = str(att.get("content", "")).strip()
+            mime_type = str(att.get("mimeType", "")).strip().lower()
+            if content_url:
+                link_targets.append((filename, content_url))
+            if not att_id:
+                continue
+            if not mime_type.startswith("image/"):
+                continue
+            media_nodes.append(
+                {
+                    "type": "media",
+                    "attrs": {
+                        "id": att_id,
+                        "type": "file",
+                        "collection": "jira-issue",
+                    },
+                }
+            )
+
+        path = f"/rest/api/3/issue/{parse.quote(key)}/comment"
+        media_payload = {
+            "body": {
+                "type": "doc",
+                "version": 1,
+                "content": [
+                    {"type": "paragraph", "content": [{"type": "text", "text": "Ảnh minh chứng kết quả:"}]},
+                    {"type": "mediaGroup", "content": media_nodes},
+                ],
+            }
+        }
+        if media_nodes:
+            try:
+                self._request_json("POST", path, payload=media_payload)
+                return
+            except JiraClientError as exc:
+                # Fallback cho mọi lỗi media comment; chỉ fail nếu fallback cũng lỗi.
+                pass
+        # Fallback: ADF link mark để Jira render link clickable
+        fallback_content: list[dict[str, object]] = [
+            {"type": "paragraph", "content": [{"type": "text", "text": "Ảnh minh chứng kết quả:"}]}
+        ]
+        if link_targets:
+            for filename, url in link_targets:
+                fallback_content.append(
+                    {
+                        "type": "paragraph",
+                        "content": [
+                            {"type": "text", "text": "- "},
+                            {
+                                "type": "text",
+                                "text": filename,
+                                "marks": [{"type": "link", "attrs": {"href": url}}],
+                            },
+                        ],
+                    }
+                )
+        else:
+            fallback_content.append(
+                {"type": "paragraph", "content": [{"type": "text", "text": "- (không có link attachment)"}]}
+            )
+        fallback_payload = {"body": {"type": "doc", "version": 1, "content": fallback_content}}
+        self._request_json("POST", path, payload=fallback_payload)
 
     # --- Search & báo cáo due date ---
 
@@ -387,7 +520,7 @@ class JiraClient:
             result[role_name] = self._extract_account_ids_from_actors(actors=actors)
         return result
 
-    def _upload_single_attachment(self, issue_key: str, file_data: AttachmentMeta) -> list[str]:
+    def _upload_single_attachment(self, issue_key: str, file_data: AttachmentMeta) -> list[dict[str, object]]:
         boundary = f"----JiraChatbotTeleBoundary{uuid.uuid4().hex}"
         body = self._build_multipart_body(boundary=boundary, file_data=file_data)
         response = self._request_json(
@@ -404,21 +537,21 @@ class JiraClient:
                 context={"issue_key": issue_key},
                 retriable=False,
             )
-        uploaded_ids: list[str] = []
+        uploaded_items: list[dict[str, object]] = []
         for item in response:
             if not isinstance(item, dict):
                 continue
             attachment_id = str(item.get("id", "")).strip()
             if attachment_id:
-                uploaded_ids.append(attachment_id)
-        if not uploaded_ids:
+                uploaded_items.append(item)
+        if not uploaded_items:
             raise JiraClientError(
                 code="JIRA_ATTACHMENT_MISSING_ID",
                 message="Attachment upload response did not include attachment id.",
                 context={"issue_key": issue_key, "filename": file_data.filename},
                 retriable=False,
             )
-        return uploaded_ids
+        return uploaded_items
 
     def _request_json(
         self,
