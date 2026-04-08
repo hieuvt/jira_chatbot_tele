@@ -28,7 +28,7 @@ def _check(condition: bool, label: str) -> int:
 
 
 def test_unknown_intent() -> int:
-    machine, _, _ = build_state_machine()
+    machine, _, _ = build_state_machine(require_proof_photo_on_mark_done_override=False)
     failures = 0
     msg = machine.handle_message(make_text(3001, 7001, "abc xyz"))
     failures += _check("Mình chưa hiểu yêu cầu" in msg, "unknown intent template")
@@ -42,7 +42,11 @@ def test_unknown_intent() -> int:
 def test_invalid_due_days() -> int:
     sender = "jira-user-7101"
     tg_user = "u7101"
-    machine, _, _ = build_state_machine(user_mapping={tg_user: sender}, member_ids={sender})
+    machine, _, _ = build_state_machine(
+        user_mapping={tg_user: sender},
+        member_ids={sender},
+        require_proof_photo_on_mark_done_override=False,
+    )
     chat_id = 3002
     user_id = 7101
     su = dict(sender_username=tg_user)
@@ -62,6 +66,7 @@ def test_not_admin_assign() -> int:
         user_mapping={tg_user: sender},
         member_ids={sender},
         admin_ids=set(),
+        require_proof_photo_on_mark_done_override=False,
     )
     msg = machine.handle_message(make_text(3003, 7201, "/giaoviec", sender_username=tg_user))
     return _check("Chỉ Admin của project mới có quyền giao việc" in msg, "member cannot assign others")
@@ -73,6 +78,7 @@ def test_attachment_limits() -> int:
     machine, _, _ = build_state_machine(
         user_mapping={tg_user: sender},
         member_ids={sender},
+        require_proof_photo_on_mark_done_override=False,
     )
     chat_id = 3004
     user_id = 7301
@@ -97,7 +103,11 @@ def test_attachment_limits() -> int:
 def test_slash_huy_cancels_session() -> int:
     sender = "jira-user-7601"
     tg_user = "u7601"
-    machine, _, _ = build_state_machine(user_mapping={tg_user: sender}, member_ids={sender})
+    machine, _, _ = build_state_machine(
+        user_mapping={tg_user: sender},
+        member_ids={sender},
+        require_proof_photo_on_mark_done_override=False,
+    )
     chat_id = 3007
     user_id = 7601
     su = dict(sender_username=tg_user)
@@ -115,7 +125,11 @@ def test_slash_huy_cancels_session() -> int:
 def test_timeout() -> int:
     sender = "jira-user-7401"
     tg_user = "u7401"
-    machine, _, _ = build_state_machine(user_mapping={tg_user: sender}, member_ids={sender})
+    machine, _, _ = build_state_machine(
+        user_mapping={tg_user: sender},
+        member_ids={sender},
+        require_proof_photo_on_mark_done_override=False,
+    )
     chat_id = 3005
     user_id = 7401
     su = dict(sender_username=tg_user)
@@ -134,6 +148,7 @@ def test_reminder_scan_and_mark() -> int:
         user_mapping={tg_user: sender},
         member_ids={sender},
         conversation_patch={"timeout_minutes": 10, "reminder_after_minutes": 4},
+        require_proof_photo_on_mark_done_override=False,
     )
     chat_id = 3010
     user_id = 7701
@@ -165,6 +180,7 @@ def test_reminder_respects_timeout_window() -> int:
         user_mapping={tg_user: sender},
         member_ids={sender},
         conversation_patch={"timeout_minutes": 10, "reminder_after_minutes": 4},
+        require_proof_photo_on_mark_done_override=False,
     )
     chat_id = 3011
     user_id = 7702
@@ -190,6 +206,7 @@ def test_jira_error_mapping() -> int:
                 retriable=True,
             )
         },
+        require_proof_photo_on_mark_done_override=False,
     )
     chat_id = 3006
     user_id = 7501

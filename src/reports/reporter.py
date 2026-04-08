@@ -33,6 +33,16 @@ def _format_report_assignee_mention(*, telegram_username: str, record: dict[str,
     return str(telegram_username).strip() or "Unknown"
 
 
+_REPORT_DESCRIPTION_DISPLAY_MAX_LEN = 500
+
+
+def _truncate_plain_for_report(text: str, max_len: int = _REPORT_DESCRIPTION_DISPLAY_MAX_LEN) -> str:
+    t = (text or "").strip()
+    if len(t) <= max_len:
+        return t
+    return f"{t[:max_len]}..."
+
+
 @dataclass(frozen=True)
 class ReportIssue:
     """Một dòng issue trong báo cáo; due_date None khi Jira không có duedate."""
@@ -40,6 +50,7 @@ class ReportIssue:
     summary: str
     due_date: date | None
     has_image_illustration: bool | None = None
+    description_text: str | None = None
 
 
 @dataclass
@@ -65,19 +76,29 @@ class ReportModel:
     assignees: list[AssigneeReport]
 
 
-def _format_report_issue_line(*, item: ReportIssue, jira_base_url: str) -> str:
+def _format_report_issue_line(
+    *, item: ReportIssue, jira_base_url: str, show_issue_description: bool = False
+) -> str:
     escaped_issue = html_lib.escape(item.issue_key)
     escaped_summary = html_lib.escape(item.summary)
     due_suffix = f" (due: {item.due_date.isoformat()})" if item.due_date else " (due: N/A)"
     if jira_base_url:
         issue_url = f"{jira_base_url}/browse/{item.issue_key}"
         issue_anchor = f'<a href="{html_lib.escape(issue_url, quote=True)}">{escaped_issue}</a>'
-        return f"- {issue_anchor}: {escaped_summary}{due_suffix}"
-    return f"- {escaped_issue}: {escaped_summary}{due_suffix}"
+        base = f"- {issue_anchor}: {escaped_summary}{due_suffix}"
+    else:
+        base = f"- {escaped_issue}: {escaped_summary}{due_suffix}"
+    if not show_issue_description:
+        return base
+    desc = (item.description_text or "").strip()
+    if not desc:
+        return base
+    excerpt = html_lib.escape(_truncate_plain_for_report(desc))
+    return f"{base}\n  Mô tả: {excerpt}"
 
 
 def _format_completed_issue_line(*, item: ReportIssue, jira_base_url: str) -> str:
-    base = _format_report_issue_line(item=item, jira_base_url=jira_base_url)
+    base = _format_report_issue_line(item=item, jira_base_url=jira_base_url, show_issue_description=False)
     note = "có ảnh minh họa" if bool(item.has_image_illustration) else "KHÔNG có ảnh minh họa"
     return f"{base} — {note}"
 
@@ -95,6 +116,7 @@ class Reporter:
         logger: Any | None = None,
         lookback_hours: int = 24,
         completed_status_names: list[str] | None = None,
+        require_proof_photo_on_mark_done: bool = False,
     ) -> None:
         self.jira_client = jira_client
         self.users_store = users_store
@@ -107,6 +129,7 @@ class Reporter:
         self._completed_status_names: list[str] = (
             list(completed_status_names) if completed_status_names else ["Done"]
         )
+        self._require_proof_photo_on_mark_done = bool(require_proof_photo_on_mark_done)
 
     def build_report(self, *, window_days: int, now: datetime) -> ReportModel:
         """
@@ -143,7 +166,12 @@ class Reporter:
                 except ValueError:
                     continue
 
-                issue = ReportIssue(issue_key=record.issue_key, summary=record.summary, due_date=due)
+                issue = ReportIssue(
+                    issue_key=record.issue_key,
+                    summary=record.summary,
+                    due_date=due,
+                    description_text=record.description_text,
+                )
                 if due < today:
                     overdue_items.append(issue)
                 else:
@@ -276,18 +304,27 @@ class Reporter:
         jira_base_url = getattr(self.jira_client, "base_url", "") or ""
         jira_base_url = jira_base_url.rstrip("/")
 
+        show_desc = self._require_proof_photo_on_mark_done
         for assignee in model.assignees:
             escaped_assignee = html_lib.escape(assignee.assignee_mention_text)
             section_blocks: list[str] = []
             if assignee.overdue:
                 block_lines = ["Quá hạn:"]
                 for item in assignee.overdue:
-                    block_lines.append(_format_report_issue_line(item=item, jira_base_url=jira_base_url))
+                    block_lines.append(
+                        _format_report_issue_line(
+                            item=item, jira_base_url=jira_base_url, show_issue_description=show_desc
+                        )
+                    )
                 section_blocks.append("\n".join(block_lines))
             if assignee.upcoming:
                 block_lines = ["Sắp đến hạn:"]
                 for item in assignee.upcoming:
-                    block_lines.append(_format_report_issue_line(item=item, jira_base_url=jira_base_url))
+                    block_lines.append(
+                        _format_report_issue_line(
+                            item=item, jira_base_url=jira_base_url, show_issue_description=show_desc
+                        )
+                    )
                 section_blocks.append("\n".join(block_lines))
             if assignee.completed_recent:
                 block_lines = [f"Đã hoàn thành trong {self._lookback_hours}h qua"]

@@ -132,6 +132,8 @@ def _needs_user_reply(output: str) -> bool:
         "Chọn người được giao việc",
         "Nhập tiêu đề công việc",
         "Nhập mô tả công việc",
+        "Mô tả ảnh minh họa kết quả",
+        "Bạn cần nhập ít nhất 1 mô tả ảnh minh họa",
         "Bạn có muốn thêm file đính kèm",
         "Bạn có muốn thêm checklist",
         "Nhập số ngày cần hoàn thành",

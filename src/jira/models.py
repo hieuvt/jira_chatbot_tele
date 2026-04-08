@@ -72,3 +72,4 @@ class JiraIssueRecord:
     status: str
     assignee_account_id: str | None
     status_category_key: str = ""  # Jira: new / indeterminate / done — loại done khỏi báo cáo due
+    description_text: str | None = None  # Plain text từ ADF description (search fields)

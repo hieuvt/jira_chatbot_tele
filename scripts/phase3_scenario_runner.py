@@ -148,6 +148,7 @@ def run_scenario(scenario: dict[str, Any], *, stop_on_fail: bool) -> tuple[int, 
         user_mapping={str(k): str(v) for k, v in user_mapping.items()},
         member_ids={str(item) for item in member_ids},
         admin_ids={str(item) for item in admin_ids},
+        require_proof_photo_on_mark_done_override=False,
     )
     dsu = scenario.get("default_sender_username")
     default_sender_username: str | None = str(dsu).strip() if dsu is not None and str(dsu).strip() else None

@@ -324,7 +324,7 @@ class JiraClient:
         for _ in range(query.max_pages):
             params = {
                 "jql": jql,
-                "fields": "summary,assignee,duedate,status,project,issuetype",
+                "fields": "summary,assignee,duedate,status,project,issuetype,description",
                 "startAt": str(start_at),
                 "maxResults": str(query.max_results),
             }
@@ -539,7 +539,7 @@ class JiraClient:
         for _ in range(max_pages):
             params = {
                 "jql": jql,
-                "fields": "summary,assignee,duedate,status,project,issuetype",
+                "fields": "summary,assignee,duedate,status,project,issuetype,description",
                 "startAt": str(start_at),
                 "maxResults": str(max_results),
             }
@@ -840,6 +840,18 @@ class JiraClient:
         ]
         return b"".join(lines)
 
+    def _issue_description_plain(self, fields: dict[str, object]) -> str | None:
+        raw = fields.get("description")
+        if raw is None:
+            return None
+        if isinstance(raw, dict):
+            text = self._extract_text_from_adf(raw).strip()
+            return text or None
+        if isinstance(raw, str):
+            t = raw.strip()
+            return t or None
+        return None
+
     def _to_issue_record(self, issue: object) -> JiraIssueRecord:
         if not isinstance(issue, dict):
             return JiraIssueRecord("", "", None, "", None)
@@ -854,6 +866,7 @@ class JiraClient:
             status=str(status.get("name", "")).strip(),
             assignee_account_id=str(assignee.get("accountId", "")).strip() or None,
             status_category_key=str(st_cat.get("key", "")).strip().lower(),
+            description_text=self._issue_description_plain(fields),
         )
 
     def _in_due_window(self, *, record_due_date: str | None, now: datetime, window_days: int) -> bool:

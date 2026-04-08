@@ -38,6 +38,7 @@ def run_assign_self_flow() -> int:
         user_mapping={tg_sender: sender_jira},
         member_ids={sender_jira},
         admin_ids=set(),
+        require_proof_photo_on_mark_done_override=False,
     )
     su = dict(sender_username=tg_sender)
 
@@ -74,6 +75,79 @@ def run_assign_self_flow() -> int:
     return failures
 
 
+def run_assign_self_flow_with_proof_photo_descriptions() -> int:
+    print("[scenario] giaochotoi with result photo descriptions (policy on)")
+    failures = 0
+    chat_id = 2011
+    user_id = 5011
+    sender_jira = "jira-user-5011"
+    tg_sender = "u5011"
+    machine, fake_jira, _ = build_state_machine(
+        user_mapping={tg_sender: sender_jira},
+        member_ids={sender_jira},
+        admin_ids=set(),
+        require_proof_photo_on_mark_done_override=True,
+    )
+    su = dict(sender_username=tg_sender)
+
+    machine.handle_message(make_text(chat_id, user_id, "/giaochotoi", **su))
+    machine.handle_message(make_text(chat_id, user_id, "Task proof desc", **su))
+    machine.handle_message(make_text(chat_id, user_id, "Mô tả công việc gốc", **su))
+
+    msg = machine.handle_message(make_text(chat_id, user_id, "xong", **su))
+    failures += _check("ít nhất 1 mô tả" in msg, "reject xong without lines")
+
+    msg = machine.handle_message(make_text(chat_id, user_id, "ảnh chụp màn hình kết quả", **su))
+    failures += _check("Mô tả ảnh minh họa" in msg or "xong" in msg.lower(), "prompt after first proof line")
+
+    msg = machine.handle_message(make_text(chat_id, user_id, "xong", **su))
+    failures += _check("thêm file đính kèm" in msg, "after xong go to attachments")
+
+    machine.handle_message(make_text(chat_id, user_id, "không", **su))
+    machine.handle_message(make_text(chat_id, user_id, "không", **su))
+    machine.handle_message(make_text(chat_id, user_id, "3", **su))
+    machine.handle_message(make_text(chat_id, user_id, "có", **su))
+
+    failures += _check(len(fake_jira.created_issue_requests or []) == 1, "create_issue once")
+    req = (fake_jira.created_issue_requests or [None])[0]
+    desc = getattr(req, "description", "") if req else ""
+    failures += _check("Yêu cầu ảnh minh họa kết quả:" in desc, "jira description has proof header")
+    failures += _check("ảnh chụp màn hình kết quả" in desc, "jira description lists proof line")
+    failures += _check("Mô tả công việc gốc" in desc, "jira description keeps task body")
+    return failures
+
+
+def run_mark_done_list_shows_jira_description() -> int:
+    print("[scenario] baoxong list shows issue description when policy on")
+    failures = 0
+    chat_id = 2012
+    user_id = 5012
+    sender_jira = "jira-user-5012"
+    tg_sender = "u5012"
+    machine, fake_jira, _ = build_state_machine(
+        user_mapping={tg_sender: sender_jira},
+        member_ids={sender_jira},
+        admin_ids=set(),
+        require_proof_photo_on_mark_done_override=True,
+    )
+    assert fake_jira.incomplete_for_assignee is not None
+    fake_jira.incomplete_for_assignee = [
+        JiraIssueRecord(
+            issue_key="OM-77",
+            summary="With desc",
+            due_date=None,
+            status="To Do",
+            assignee_account_id=sender_jira,
+            status_category_key="new",
+            description_text="Cần ảnh A và ảnh B",
+        ),
+    ]
+    su = dict(sender_username=tg_sender)
+    msg = machine.handle_message(make_text(chat_id, user_id, "/baoxong", **su))
+    failures += _check("Mô tả:" in msg and "Cần ảnh A" in msg, "list includes truncated description")
+    return failures
+
+
 def run_vieccuatoi_report_flow() -> int:
     print("[scenario] vieccuatoi report (fake empty lists)")
     failures = 0
@@ -85,6 +159,7 @@ def run_vieccuatoi_report_flow() -> int:
         user_mapping={tg_sender: sender_jira},
         member_ids={sender_jira},
         admin_ids=set(),
+        require_proof_photo_on_mark_done_override=False,
     )
     su = dict(sender_username=tg_sender)
     msg = machine.handle_message(make_text(chat_id, user_id, "/vieccuatoi", **su))
@@ -104,6 +179,7 @@ def run_mark_done_flow() -> int:
         user_mapping={tg_sender: sender_jira},
         member_ids={sender_jira},
         admin_ids=set(),
+        require_proof_photo_on_mark_done_override=False,
     )
     assert fake_jira.incomplete_for_assignee is not None
     fake_jira.incomplete_for_assignee = [
@@ -135,6 +211,7 @@ def run_baocao_flow_admin() -> int:
         user_mapping={tg_sender: sender_jira},
         member_ids=set(),
         admin_ids={sender_jira},
+        require_proof_photo_on_mark_done_override=False,
     )
     su = dict(sender_username=tg_sender)
     msg = machine.handle_message(make_text(chat_id, user_id, "/baocao", **su))
@@ -167,6 +244,7 @@ def run_baocao_flow_non_admin() -> int:
         user_mapping={tg_sender: sender_jira},
         member_ids=set(),
         admin_ids=set(),
+        require_proof_photo_on_mark_done_override=False,
     )
     su = dict(sender_username=tg_sender)
     msg = machine.handle_message(make_text(chat_id, user_id, "/baocao", **su))
@@ -188,6 +266,7 @@ def run_assign_task_flow() -> int:
         user_mapping={tg_sender: sender_jira},
         member_ids={sender_jira, assignee_jira},
         admin_ids={sender_jira},
+        require_proof_photo_on_mark_done_override=False,
     )
     su_admin = dict(sender_username=tg_sender)
 
@@ -236,6 +315,8 @@ def run_assign_task_flow() -> int:
 def main() -> int:
     failures = 0
     failures += run_assign_self_flow()
+    failures += run_assign_self_flow_with_proof_photo_descriptions()
+    failures += run_mark_done_list_shows_jira_description()
     failures += run_vieccuatoi_report_flow()
     failures += run_mark_done_flow()
     failures += run_baocao_flow_admin()

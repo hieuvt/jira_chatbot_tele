@@ -212,6 +212,7 @@ def build_state_machine(
     admin_ids: set[str] | None = None,
     jira_overrides: dict[str, JiraClientError | None] | None = None,
     conversation_patch: dict[str, Any] | None = None,
+    require_proof_photo_on_mark_done_override: bool | None = None,
 ) -> tuple[ConversationStateMachine, FakeJiraClient, FakeUsersStore]:
     """Dựng state machine + fake Jira + fake store từ config/templates thật."""
     runtime = load_runtime_config(config_path)
@@ -223,6 +224,8 @@ def build_state_machine(
     )
     if conversation_patch:
         conversation.update(conversation_patch)
+    if require_proof_photo_on_mark_done_override is not None:
+        conversation["require_proof_photo_on_mark_done"] = bool(require_proof_photo_on_mark_done_override)
     telegram = runtime.get("telegram", {}) if isinstance(runtime.get("telegram"), dict) else {}
     attachments = telegram.get("attachments", {}) if isinstance(telegram.get("attachments"), dict) else {}
 
@@ -253,6 +256,7 @@ def build_state_machine(
         logger=None,
         lookback_hours=completed_lookback_hours,
         completed_status_names=[str(x).strip() for x in completed_status_names if str(x).strip()],
+        require_proof_photo_on_mark_done=bool(conversation.get("require_proof_photo_on_mark_done", False)),
     )
     machine = ConversationStateMachine(
         jira_client=fake_jira,
@@ -269,6 +273,7 @@ def build_state_machine(
             attachment_max_files=int(attachments.get("max_files", 10)),
             attachment_max_total_bytes=20 * 1024 * 1024,
             attachment_max_bytes=int(jira.get("attachment_max_bytes", 10 * 1024 * 1024)),
+            require_proof_photo_on_mark_done=bool(conversation.get("require_proof_photo_on_mark_done", False)),
         ),
     )
     return machine, fake_jira, users_store

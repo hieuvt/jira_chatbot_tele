@@ -109,6 +109,7 @@ def bootstrap_app() -> dict[str, Any]:
         logger=logger,
         lookback_hours=completed_lookback_hours,
         completed_status_names=[str(x).strip() for x in completed_status_names if str(x).strip()],
+        require_proof_photo_on_mark_done=require_proof_photo_on_mark_done,
     )
 
     poem_service = _build_poem_service(runtime=runtime)

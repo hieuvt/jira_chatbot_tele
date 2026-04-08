@@ -37,6 +37,8 @@
     "TPL_ASSIGNEE_NOT_MEMBER": "Người này không phải thành viên của project. Hãy kiểm tra Jira trước khi giao việc.",
     "TPL_ASK_SUMMARY": "Nhập tiêu đề công việc (summary).",
     "TPL_ASK_DESCRIPTION": "Nhập mô tả công việc (description).",
+    "TPL_ASK_RESULT_PHOTO_DESC": "Mô tả ảnh minh họa kết quả. Yêu cầu: có ít nhất 1 mô tả. Nhập \"xong\" để kết thúc.",
+    "TPL_RESULT_PHOTO_DESC_NEED_ONE": "Bạn cần nhập ít nhất 1 mô tả ảnh minh họa trước khi nhập \"xong\". Hãy mô tả từng loại ảnh kết quả cần có (mỗi tin nhắn một mô tả), sau đó nhập \"xong\".",
     "TPL_ASK_ATTACHMENTS": "Bạn có muốn thêm file đính kèm không? Nếu có hãy upload file. Nếu không, nhập \"Không\". Khi upload xong, nhập \"Xong\".",
     "TPL_ASK_CHECKLIST": "Bạn có muốn thêm checklist không? Nếu có, nhập mỗi dòng một việc. Nhập \"Không\" để bỏ qua, hoặc \"Xong\" để kết thúc checklist.",
     "TPL_ASK_DUE_DAYS": "Nhập số ngày cần hoàn thành (số nguyên dương).",

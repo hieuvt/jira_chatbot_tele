@@ -58,6 +58,25 @@ HTML_OUTPUT_PREFIX = "__HTML__:"
 # - handler sẽ parse JSON và gửi lần lượt từng message
 MULTI_MESSAGE_PREFIX = "__MULTI_MESSAGE__:"
 
+# Hiển thị description Jira trong list/báo cáo (tránh tin Telegram quá dài)
+_ISSUE_DESCRIPTION_DISPLAY_MAX_LEN = 500
+
+
+def _compose_description_with_proof_requirements(base: str, lines: list[str]) -> str:
+    """Ghép mô tả task với các dòng mô tả ảnh minh họa kết quả (upload Jira)."""
+    base_stripped = (base or "").strip()
+    trimmed = [ln.strip() for ln in lines if ln.strip()]
+    bullet_block = "\n".join(f"  {ln}" for ln in trimmed)
+    return f"{base_stripped}\n\nYêu cầu ảnh minh họa kết quả:\n{bullet_block}"
+
+
+def _truncate_plain_for_display(text: str, max_len: int = _ISSUE_DESCRIPTION_DISPLAY_MAX_LEN) -> str:
+    t = (text or "").strip()
+    if len(t) <= max_len:
+        return t
+    return f"{t[:max_len]}..."
+
+
 def _jira_browse_anchor(issue_key: str, jira_base_url: str) -> str:
     """HTML anchor tới Jira browse; không có base_url thì chỉ escape key."""
     base = (jira_base_url or "").rstrip("/")
@@ -98,6 +117,7 @@ class ConversationState(str, Enum):
     S5_CHECK_ASSIGNEE_MEMBER = "S5_CHECK_ASSIGNEE_MEMBER"
     S6_ASK_SUMMARY = "S6_ASK_SUMMARY"
     S7_ASK_DESCRIPTION = "S7_ASK_DESCRIPTION"
+    S7A_COLLECT_RESULT_PHOTO_DESC = "S7A_COLLECT_RESULT_PHOTO_DESC"
     S8_ASK_ATTACHMENTS = "S8_ASK_ATTACHMENTS"
     S9_ASK_CHECKLIST = "S9_ASK_CHECKLIST"
     S10_ASK_DUE_DAYS = "S10_ASK_DUE_DAYS"
@@ -116,6 +136,7 @@ _REMINDER_ELIGIBLE_STATES: frozenset[ConversationState] = frozenset(
         ConversationState.S4_ASK_ASSIGNEE,
         ConversationState.S6_ASK_SUMMARY,
         ConversationState.S7_ASK_DESCRIPTION,
+        ConversationState.S7A_COLLECT_RESULT_PHOTO_DESC,
         ConversationState.S8_ASK_ATTACHMENTS,
         ConversationState.S9_ASK_CHECKLIST,
         ConversationState.S10_ASK_DUE_DAYS,
@@ -199,6 +220,7 @@ class ConversationBuffer:
     pending_assignee_telegram_display_name: str | None = None
     summary: str | None = None
     description: str | None = None
+    result_photo_description_lines: list[str] = field(default_factory=list)
     checklist_items: list[str] = field(default_factory=list)
     due_days: int | None = None
     attachments: list[FileMeta] = field(default_factory=list)
@@ -374,6 +396,8 @@ class ConversationStateMachine:
             return self._on_summary(buffer=buffer, message=message)
         if buffer.state == ConversationState.S7_ASK_DESCRIPTION:
             return self._on_description(buffer=buffer, message=message)
+        if buffer.state == ConversationState.S7A_COLLECT_RESULT_PHOTO_DESC:
+            return self._on_collect_result_photo_desc(buffer=buffer, message=message)
         if buffer.state == ConversationState.S8_ASK_ATTACHMENTS:
             return self._on_attachments(buffer=buffer, message=message)
         if buffer.state == ConversationState.S9_ASK_CHECKLIST:
@@ -694,8 +718,34 @@ class ConversationStateMachine:
         if message.has_media or not message.text or not message.text.strip():
             return self._tpl("TPL_ASK_DESCRIPTION")
         buffer.description = message.text.strip()
+        if self._config.require_proof_photo_on_mark_done:
+            buffer.result_photo_description_lines.clear()
+            buffer.state = ConversationState.S7A_COLLECT_RESULT_PHOTO_DESC
+            return self._tpl("TPL_ASK_RESULT_PHOTO_DESC")
         buffer.state = ConversationState.S8_ASK_ATTACHMENTS
         return self._tpl("TPL_ASK_ATTACHMENTS")
+
+    def _on_collect_result_photo_desc(self, *, buffer: ConversationBuffer, message: MessageInput) -> str:
+        """Thu nhiều dòng mô tả ảnh minh họa kết quả; chỉ cho phép \"xong\" khi đã có ít nhất 1 dòng."""
+        prompt = self._tpl("TPL_ASK_RESULT_PHOTO_DESC")
+        if message.has_media:
+            return prompt
+        if not message.text:
+            return prompt
+        raw = message.text.strip()
+        if is_xong(raw):
+            if not buffer.result_photo_description_lines:
+                return self._tpl("TPL_RESULT_PHOTO_DESC_NEED_ONE")
+            buffer.description = _compose_description_with_proof_requirements(
+                buffer.description or "",
+                buffer.result_photo_description_lines,
+            )
+            buffer.result_photo_description_lines.clear()
+            buffer.state = ConversationState.S8_ASK_ATTACHMENTS
+            return self._tpl("TPL_ASK_ATTACHMENTS")
+        if raw:
+            buffer.result_photo_description_lines.append(raw)
+        return prompt
 
     def _on_attachments(self, *, buffer: ConversationBuffer, message: MessageInput) -> str:
         """Upload file hoặc Không / Xong; kiểm tra số file và dung lượng."""
@@ -780,6 +830,22 @@ class ConversationStateMachine:
             suffix = f" (due: {due_text})" if due_text else ""
             return f"- {issue_part}: {escaped_summary}{suffix}"
 
+        def _issue_line_maybe_desc(
+            *,
+            issue_key: str,
+            summary: str,
+            due_text: str | None,
+            description_text: str | None,
+        ) -> str:
+            line = _issue_line(issue_key=issue_key, summary=summary, due_text=due_text)
+            if not self._config.require_proof_photo_on_mark_done:
+                return line
+            desc = (description_text or "").strip()
+            if not desc:
+                return line
+            excerpt = html.escape(_truncate_plain_for_display(desc, _ISSUE_DESCRIPTION_DISPLAY_MAX_LEN))
+            return f"{line}\n  Mô tả: {excerpt}"
+
         now = datetime.now(timezone.utc)
         due_query = QueryIssuesRequest(
             project_key=self._config.project_key,
@@ -817,7 +883,12 @@ class ConversationStateMachine:
                 due_value = date.fromisoformat(record.due_date)
             except ValueError:
                 continue
-            line = _issue_line(issue_key=record.issue_key, summary=record.summary, due_text=due_value.isoformat())
+            line = _issue_line_maybe_desc(
+                issue_key=record.issue_key,
+                summary=record.summary,
+                due_text=due_value.isoformat(),
+                description_text=record.description_text,
+            )
             if due_value < today:
                 overdue_lines.append(line)
             elif due_value <= due_upper:
@@ -854,10 +925,16 @@ class ConversationStateMachine:
 
     def _mark_done_list_html_body(self, items: list[JiraIssueRecord]) -> str:
         base = self._mark_done_jira_base_url()
+        show_desc = self._config.require_proof_photo_on_mark_done
         lines = [html.escape("Nhập số thứ tự của task bạn muốn báo hoàn thành:")]
         for i, rec in enumerate(items, start=1):
             anchor = _jira_browse_anchor(rec.issue_key, base)
             lines.append(f"{i}. {anchor} — {html.escape(rec.summary)}")
+            if show_desc:
+                desc = (rec.description_text or "").strip()
+                if desc:
+                    excerpt = html.escape(_truncate_plain_for_display(desc, _ISSUE_DESCRIPTION_DISPLAY_MAX_LEN))
+                    lines.append(f"   Mô tả: {excerpt}")
         return "\n".join(lines)
 
     def _format_mark_done_pick_lines(self, items: list[JiraIssueRecord]) -> str:
