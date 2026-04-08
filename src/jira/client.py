@@ -473,25 +473,38 @@ class JiraClient:
         return False
 
     def _extract_text_from_adf(self, body: object) -> str:
+        """
+        Lấy plain text từ ADF Jira. Không được walk mọi giá trị dict: khóa `type` có giá trị
+        chuỗi ('doc', 'paragraph', 'text', …) sẽ bị nối nhầm vào nội dung (lỗi /vieccuatoi).
+        """
         chunks: list[str] = []
 
         def walk(node: object) -> None:
-            if isinstance(node, str):
-                chunks.append(node)
-                return
             if isinstance(node, list):
                 for item in node:
                     walk(item)
                 return
-            if isinstance(node, dict):
-                text_value = node.get("text")
-                if isinstance(text_value, str):
-                    chunks.append(text_value)
-                for value in node.values():
-                    walk(value)
+            if not isinstance(node, dict):
+                return
+            node_type = str(node.get("type", "")).strip().lower()
+            if node_type == "text":
+                tv = node.get("text")
+                if isinstance(tv, str):
+                    chunks.append(tv)
+                return
+            if node_type in ("hardbreak", "hard_break"):
+                chunks.append("\n")
+                return
+            if node_type in ("paragraph", "heading"):
+                for child in node.get("content") or []:
+                    walk(child)
+                chunks.append("\n")
+                return
+            for child in node.get("content") or []:
+                walk(child)
 
         walk(body)
-        return " ".join(chunks)
+        return "".join(chunks).strip()
 
     def _href_looks_like_image_or_attachment(self, href: str) -> bool:
         link = (href or "").strip()
